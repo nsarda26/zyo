@@ -163,118 +163,222 @@ function ScaffoldDiagram({ tissueId, size }: { tissueId: string; size: number })
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 3D TISSUE VIEWER
+// MOLECULAR SCAFFOLD VIEWER
 // ─────────────────────────────────────────────────────────────────
 
-function TissueViewer3D({ result, viability, physics }: { result: SimResult; viability: Viability; physics: Physics }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const frameRef  = useRef(0);
-  const angle     = useRef({ x: 0.38, y: 0.5 });
-  const drag      = useRef({ on: false, lx: 0, ly: 0 });
-  const tick      = useRef(0);
+interface ScaffoldDef {
+  id: string;
+  name: string;
+  label: string;
+  smiles: string;
+  mw: string;
+  chemotype: string;
+  color: string;
+  atoms: { x: number; y: number; el: string }[];
+  bonds: [number, number, number][];
+}
 
-  useEffect(() => {
-    const canvas = canvasRef.current; if (!canvas) return;
-    const ctx = canvas.getContext("2d")!;
-    const W = canvas.width, H = canvas.height;
-    const stack = TISSUE_STACKS[result.tissue_key] ?? TISSUE_STACKS.skin_dermis;
-    let seed = 42;
-    const rand = () => { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; };
-    const cellDots: { x: number; z: number; li: number }[] = [];
-    stack.forEach((layer, li) => { if (layer.mat === "Cells") for (let i = 0; i < 24; i++) cellDots.push({ x: rand()*1.8-0.9, z: rand()*1.8-0.9, li }); });
+const SCAFFOLD_STRUCTURES: ScaffoldDef[] = [
+  {
+    id: "skin_dermis",
+    name: "GelMA-HDF Scaffold",
+    label: "Scaffold 1 (Lead)",
+    smiles: "Nc1nc2c(N)ncnc2n1CC1CCNCC1",
+    mw: "85 kDa",
+    chemotype: "Fibrous ECM",
+    color: "#3b82f6",
+    atoms: [
+      {x:52,y:28,el:"N"},{x:72,y:18,el:"C"},{x:92,y:28,el:"N"},{x:92,y:52,el:"C"},
+      {x:72,y:62,el:"C"},{x:52,y:52,el:"C"},{x:32,y:62,el:"N"},{x:32,y:82,el:"C"},
+      {x:52,y:92,el:"C"},{x:72,y:82,el:"N"},{x:108,y:62,el:"C"},{x:124,y:52,el:"C"},
+      {x:140,y:62,el:"N"},{x:140,y:82,el:"C"},{x:124,y:92,el:"C"},{x:108,y:82,el:"C"},
+      {x:16,y:52,el:"N"},{x:72,y:38,el:""},{x:56,y:38,el:""},
+    ],
+    bonds: [[0,1,1],[1,2,2],[2,3,1],[3,4,2],[4,5,1],[5,0,2],[4,6,1],[6,7,1],[7,8,1],[8,9,2],[9,3,1],[3,10,1],[10,11,1],[11,12,1],[12,13,1],[13,14,1],[14,15,1],[15,10,1],[5,16,1]],
+  },
+  {
+    id: "skin_epidermis",
+    name: "GelMA-NHEK Sheet",
+    label: "Scaffold 2",
+    smiles: "O=S(=O)(N)CCC(NC(=O)c1ccncc1)C(=O)O",
+    mw: "72 kDa",
+    chemotype: "Sheet",
+    color: "#ef4444",
+    atoms: [
+      {x:20,y:50,el:"O"},{x:40,y:40,el:"S"},{x:40,y:20,el:"O"},{x:60,y:40,el:"N"},
+      {x:60,y:60,el:"C"},{x:80,y:60,el:"C"},{x:100,y:50,el:"C"},{x:100,y:30,el:"N"},
+      {x:116,y:20,el:"C"},{x:116,y:50,el:"C"},{x:132,y:60,el:"C"},{x:132,y:40,el:"C"},
+      {x:148,y:30,el:"N"},{x:100,y:70,el:"O"},{x:80,y:80,el:"C"},{x:64,y:90,el:"O"},
+      {x:80,y:96,el:"O"},{x:24,y:36,el:""},
+    ],
+    bonds: [[0,1,2],[1,2,2],[1,3,1],[3,4,1],[4,5,1],[5,6,1],[6,7,2],[7,8,1],[8,9,1],[9,10,2],[10,11,1],[11,6,1],[9,12,1],[5,13,2],[5,14,1],[14,15,2],[14,16,1]],
+  },
+  {
+    id: "cartilage",
+    name: "Alginate-Chondro Dense",
+    label: "Scaffold 3",
+    smiles: "NCc1nc2cc(F)ccc2n1CCCO",
+    mw: "110 kDa",
+    chemotype: "Load-bearing",
+    color: "#10b981",
+    atoms: [
+      {x:28,y:90,el:"N"},{x:44,y:80,el:"C"},{x:44,y:60,el:"N"},{x:60,y:50,el:"C"},
+      {x:76,y:60,el:"N"},{x:92,y:50,el:"C"},{x:108,y:60,el:"C"},{x:108,y:80,el:"C"},
+      {x:92,y:90,el:"C"},{x:76,y:80,el:"C"},{x:124,y:50,el:"F"},{x:60,y:30,el:"C"},
+      {x:44,y:20,el:"C"},{x:28,y:30,el:"C"},{x:76,y:20,el:"C"},{x:92,y:30,el:"N"},
+      {x:108,y:20,el:"C"},{x:124,y:30,el:"C"},{x:140,y:20,el:"O"},{x:16,y:100,el:""},
+    ],
+    bonds: [[0,1,1],[1,2,2],[2,3,1],[3,4,1],[4,5,2],[5,6,1],[6,7,2],[7,8,1],[8,9,2],[9,4,1],[6,10,1],[3,11,2],[11,12,1],[12,13,2],[13,1,1],[11,14,1],[14,15,1],[15,16,1],[16,17,1],[17,18,1]],
+  },
+  {
+    id: "corneal",
+    name: "GelMA Transparent",
+    label: "Scaffold 4",
+    smiles: "C=CC(=O)Nc1ccc(C(=O)Nc2nc3sc4cc(NC(C)=O)ccc4c3c(=O)n2C)cc1",
+    mw: "68 kDa",
+    chemotype: "Transparent",
+    color: "#8b5cf6",
+    atoms: [
+      {x:20,y:40,el:"C"},{x:36,y:30,el:"C"},{x:52,y:40,el:"C"},{x:52,y:60,el:"O"},
+      {x:68,y:30,el:"N"},{x:84,y:40,el:"C"},{x:100,y:30,el:"C"},{x:116,y:40,el:"C"},
+      {x:116,y:60,el:"C"},{x:100,y:70,el:"C"},{x:84,y:60,el:"C"},{x:132,y:30,el:"C"},
+      {x:148,y:40,el:"N"},{x:148,y:60,el:"C"},{x:132,y:70,el:"O"},{x:164,y:30,el:"C"},
+      {x:164,y:10,el:"N"},{x:148,y:5,el:"C"},{x:132,y:10,el:"S"},{x:180,y:40,el:"C"},
+      {x:180,y:60,el:"C"},{x:164,y:70,el:"C"},{x:148,y:80,el:"N"},{x:36,y:10,el:""},
+    ],
+    bonds: [[0,1,2],[1,2,1],[2,3,2],[2,4,1],[4,5,1],[5,6,2],[6,7,1],[7,8,2],[8,9,1],[9,10,2],[10,5,1],[7,11,1],[11,12,2],[12,13,1],[13,14,2],[11,15,1],[15,16,1],[16,17,2],[17,18,1],[18,11,1],[15,19,1],[19,20,2],[20,21,1],[21,22,1],[22,13,1]],
+  },
+];
 
-    const proj = (x: number, y: number, z: number) => {
-      const ax = angle.current.x, ay = angle.current.y;
-      const rx = x*Math.cos(ay)+z*Math.sin(ay), rz0 = -x*Math.sin(ay)+z*Math.cos(ay);
-      const ry2 = y*Math.cos(ax)-rz0*Math.sin(ax), rz2 = y*Math.sin(ax)+rz0*Math.cos(ax);
-      const s = 340/(340+rz2+60);
-      return { sx: W/2+rx*s*85, sy: H/2+ry2*s*85, depth: rz2 };
-    };
-    const hex2rgba = (hex: string, a: number) => {
-      const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
-      return `rgba(${r},${g},${b},${a})`;
-    };
+const ATOM_INFO: Record<string, { name: string; role: string; color: string }> = {
+  N: { name: "Nitrogen", role: "H-bond donor/acceptor, amine group", color: "#3b82f6" },
+  O: { name: "Oxygen",   role: "Carbonyl / hydroxyl, hydrophilic", color: "#ef4444" },
+  S: { name: "Sulfur",   role: "Thioether / disulfide, crosslink site", color: "#f59e0b" },
+  F: { name: "Fluorine", role: "Metabolic blocker, lipophilic", color: "#10b981" },
+  C: { name: "Carbon",   role: "Backbone scaffold atom", color: "#374151" },
+};
 
-    let cumH = 0;
-    const yRanges: { y0:number; y1:number; mat:string; label:string; vKey:"24h"|"72h"|"7d" }[] = [];
-    stack.forEach((layer, li) => {
-      const y0=-1.2+cumH*2.4, y1=y0+layer.h*2.4; cumH+=layer.h;
-      const vKey: "24h"|"72h"|"7d" = li < stack.length/3 ? "24h" : li < 2*stack.length/3 ? "72h" : "7d";
-      yRanges.push({ y0, y1, mat:layer.mat, label:layer.label, vKey });
-    });
+const SCAFFOLD_EXTRA: Record<string, { cells: string; gelma: string; alginate: string; cacl2: string; crosslink: string; notes: string }> = {
+  skin_dermis:    { cells:"HDF 1×10⁶/mL",  gelma:"5% w/v",  alginate:"3% w/v", cacl2:"100 mM", crosslink:"UV 405nm / 30s", notes:"Fibrous ECM mimetic. High cell viability window." },
+  skin_epidermis: { cells:"NHEK 1×10⁶/mL", gelma:"8% w/v",  alginate:"2% w/v", cacl2:"80 mM",  crosslink:"UV 365nm / 20s", notes:"Sheet architecture. Barrier function priority." },
+  cartilage:      { cells:"Chondro 2×10⁶/mL",gelma:"10% w/v",alginate:"4% w/v",cacl2:"150 mM", crosslink:"Ionic + UV dual",  notes:"High stiffness. Load-bearing mechanical demand." },
+  corneal:        { cells:"LSC 5×10⁵/mL",  gelma:"6% w/v",  alginate:"2% w/v", cacl2:"60 mM",  crosslink:"UV 365nm / 15s", notes:"Optical transparency critical. Low cell density." },
+};
 
-    function draw() {
-      ctx.clearRect(0, 0, W, H);
-      type Face = { pts:[number,number][]; color:string; alpha:number; depth:number };
-      const faces: Face[] = [];
-      yRanges.forEach(({ y0, y1, mat, vKey }) => {
-        const color = MAT[mat]?.color ?? "#94a3b8";
-        const vf = viability[vKey]/100;
-        const corners = [[-1,y0,-1],[1,y0,-1],[1,y0,1],[-1,y0,1],[-1,y1,-1],[1,y1,-1],[1,y1,1],[-1,y1,1]].map(([x,y,z])=>proj(x,y,z));
-        [[0,1,2,3],[4,5,6,7],[0,1,5,4],[2,3,7,6],[0,3,7,4],[1,2,6,5]].forEach((fi,idx) => {
-          const pts=fi.map(i=>[corners[i].sx,corners[i].sy] as [number,number]);
-          const depth=fi.reduce((s,i)=>s+corners[i].depth,0)/4;
-          faces.push({ pts, color, alpha:[0.80,0.52,0.88,0.68,0.66,0.93][idx]*(.5+.5*vf), depth });
-        });
-      });
-      const rc = riskColor(result.stages.rejection.risk_tier);
-      const topC=[proj(-1,-1.2,-1),proj(1,-1.2,-1),proj(1,-1.2,1),proj(-1,-1.2,1)];
-      faces.push({ pts:topC.map(p=>[p.sx,p.sy] as [number,number]), color:rc, alpha:0.18, depth:topC.reduce((s,p)=>s+p.depth,0)/4 });
-      faces.sort((a,b)=>a.depth-b.depth);
-      faces.forEach(({ pts, color, alpha }) => {
-        ctx.beginPath(); ctx.moveTo(pts[0][0],pts[0][1]); pts.slice(1).forEach(p=>ctx.lineTo(p[0],p[1])); ctx.closePath();
-        ctx.fillStyle = hex2rgba(color,Math.max(alpha,.04)); ctx.fill();
-        ctx.strokeStyle="rgba(255,255,255,0.2)"; ctx.lineWidth=0.5; ctx.globalAlpha=0.25; ctx.stroke(); ctx.globalAlpha=1;
-      });
-      // cell dots
-      const t = tick.current*0.012;
-      cellDots.forEach(({ x, z, li }) => {
-        const yr = yRanges[li]; if (!yr) return;
-        const yMid=(yr.y0+yr.y1)/2+Math.sin(t+x*3+z*2)*0.04;
-        const p=proj(x,yMid,z); const color=MAT["Cells"].color;
-        ctx.beginPath(); ctx.arc(p.sx,p.sy,2,0,Math.PI*2);
-        ctx.fillStyle=hex2rgba(color,0.5*(viability[yr.vKey]/100)); ctx.fill();
-        ctx.beginPath(); ctx.arc(p.sx,p.sy,0.8,0,Math.PI*2);
-        ctx.fillStyle=hex2rgba("#1e1b4b",0.7); ctx.fill();
-      });
-      // layer labels right
-      yRanges.forEach(({ y0,y1,mat,label,vKey }) => {
-        const p=proj(1.08,(y0+y1)/2,0); const color=MAT[mat]?.color??"#94a3b8";
-        ctx.font="8px monospace"; ctx.textAlign="left"; ctx.fillStyle=color; ctx.globalAlpha=0.85;
-        ctx.fillText(label,p.sx+4,p.sy+2);
-        const v=viability[vKey]; ctx.fillStyle=v>80?"#4ade80":v>70?"#fbbf24":"#f87171";
-        ctx.font="7px monospace"; ctx.fillText(`${v}%`,p.sx+4,p.sy+11); ctx.globalAlpha=1;
-      });
-      // quality arc
-      const qr=15,qx=24,qy=H-20; const qc=physics.quality_score>0.7?"#3b82f6":physics.quality_score>0.5?"#d97706":"#ef4444";
-      ctx.beginPath(); ctx.arc(qx,qy,qr,Math.PI,Math.PI+Math.PI*2*physics.quality_score);
-      ctx.strokeStyle=qc; ctx.lineWidth=2.5; ctx.globalAlpha=0.8; ctx.stroke(); ctx.globalAlpha=1;
-      ctx.fillStyle="#94a3b8"; ctx.font="7px monospace"; ctx.textAlign="center";
-      ctx.fillText(`Q ${(physics.quality_score*100).toFixed(0)}%`,qx,qy+3);
-      // frame info
-      ctx.fillStyle="#475569"; ctx.font="7.5px monospace"; ctx.textAlign="right";
-      ctx.fillText(`Frame ${Math.floor(tick.current)} · ${physics.print_time.n_layers*8} atoms`,W-6,14);
-    }
-
-    const loop = () => { if (!drag.current.on) angle.current.y+=0.003; tick.current=(tick.current+1)%9999; draw(); frameRef.current=requestAnimationFrame(loop); };
-    loop();
-    const onDown=(e:MouseEvent)=>{drag.current={on:true,lx:e.clientX,ly:e.clientY};};
-    const onUp=()=>{drag.current.on=false;};
-    const onMove=(e:MouseEvent)=>{if(!drag.current.on)return;angle.current.y+=(e.clientX-drag.current.lx)*0.01;angle.current.x+=(e.clientY-drag.current.ly)*0.01;drag.current.lx=e.clientX;drag.current.ly=e.clientY;};
-    canvas.addEventListener("mousedown",onDown); window.addEventListener("mouseup",onUp); window.addEventListener("mousemove",onMove);
-    return () => { cancelAnimationFrame(frameRef.current); canvas.removeEventListener("mousedown",onDown); window.removeEventListener("mouseup",onUp); window.removeEventListener("mousemove",onMove); };
-  }, [result, viability, physics]);
+function MoleculeCard({ scaffold, selected, onClick }: { scaffold: ScaffoldDef; selected: boolean; onClick: () => void }) {
+  const [hoveredAtom, setHoveredAtom] = useState<string | null>(null);
+  const [showInfo, setShowInfo] = useState(false);
+  const W = 160, H = 108;
+  const extra = SCAFFOLD_EXTRA[scaffold.id];
 
   return (
-    <div className="relative">
-      <canvas ref={canvasRef} width={480} height={300}
-        className="w-full rounded-xl border border-slate-700 cursor-grab active:cursor-grabbing"
-        style={{ background:"linear-gradient(160deg,#0f172a 0%,#1e293b 100%)" }} />
-      <div className="absolute bottom-2 left-2 flex flex-col gap-0.5">
-        {Object.entries(MAT).slice(0,5).map(([k,v])=>(
-          <span key={k} className="flex items-center gap-1 text-[7.5px] font-mono" style={{ color:v.color }}>
-            <span className="w-1.5 h-1.5 rounded-full" style={{ background:v.color, opacity:0.85 }} />{v.label}
-          </span>
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setShowInfo(true)}
+      onMouseLeave={() => { setShowInfo(false); setHoveredAtom(null); }}
+      className="flex flex-col cursor-pointer transition-all rounded-xl border overflow-visible relative"
+      style={{ borderColor: selected ? scaffold.color : showInfo ? scaffold.color + "80" : "#e2e8f0", boxShadow: selected ? `0 0 0 1.5px ${scaffold.color}` : showInfo ? `0 2px 12px ${scaffold.color}22` : "none", background: selected ? `${scaffold.color}08` : "#fff" }}>
+      <div className="px-2.5 pt-2 pb-1 flex items-center justify-between">
+        <span className="font-mono text-[8px] font-semibold text-slate-700">{scaffold.label}</span>
+        {selected && <span className="font-mono text-[6.5px] px-1.5 py-0.5 rounded-full" style={{ background: scaffold.color + "20", color: scaffold.color }}>active</span>}
+      </div>
+
+      {/* SVG molecule drawing */}
+      <div className="flex items-center justify-center bg-white mx-2 mb-1 rounded-lg border border-slate-100" style={{ height: H }}>
+        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible" }}>
+          {scaffold.bonds.map(([a, b, order], i) => {
+            const A = scaffold.atoms[a], B = scaffold.atoms[b];
+            if (!A || !B) return null;
+            const dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx*dx+dy*dy);
+            const ox = -dy/len*2.5, oy = dx/len*2.5;
+            return (
+              <g key={i}>
+                <line x1={A.x} y1={A.y} x2={B.x} y2={B.y} stroke={scaffold.color} strokeWidth="1.5" strokeOpacity="0.65" />
+                {order === 2 && <line x1={A.x+ox} y1={A.y+oy} x2={B.x+ox} y2={B.y+oy} stroke={scaffold.color} strokeWidth="1.2" strokeOpacity="0.35" />}
+              </g>
+            );
+          })}
+          {scaffold.atoms.map((atom, i) => {
+            if (!atom.el) return null;
+            const info = ATOM_INFO[atom.el] ?? ATOM_INFO.C;
+            const isHovered = hoveredAtom === `${scaffold.id}-${i}`;
+            return (
+              <g key={i}
+                onMouseEnter={e => { e.stopPropagation(); setHoveredAtom(`${scaffold.id}-${i}`); }}
+                onMouseLeave={e => { e.stopPropagation(); setHoveredAtom(null); }}
+                style={{ cursor: "pointer" }}>
+                <circle cx={atom.x} cy={atom.y} r={isHovered ? 9 : 6} fill={isHovered ? info.color + "18" : "white"} stroke={isHovered ? info.color : "none"} strokeWidth="1" />
+                <text x={atom.x} y={atom.y+3} textAnchor="middle" fontSize={isHovered ? "8" : "7"} fontWeight="700" fontFamily="monospace" fill={info.color}>
+                  {atom.el}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* atom tooltip */}
+      {hoveredAtom && (() => {
+        const [sid, idx] = hoveredAtom.split("-");
+        if (sid !== scaffold.id) return null;
+        const atom = scaffold.atoms[parseInt(idx)];
+        if (!atom?.el) return null;
+        const info = ATOM_INFO[atom.el] ?? ATOM_INFO.C;
+        return (
+          <div className="absolute z-50 pointer-events-none rounded-lg border border-slate-200 bg-white shadow-md px-2.5 py-2 w-40 text-left"
+            style={{ left: atom.x + 20, top: atom.y - 10 }}>
+            <div className="font-mono text-[9px] font-bold mb-0.5" style={{ color: info.color }}>{info.name}</div>
+            <div className="font-mono text-[7.5px] text-slate-500 leading-snug">{info.role}</div>
+          </div>
+        );
+      })()}
+
+      <div className="px-2.5 pb-2 flex flex-col gap-0.5">
+        <span className="font-mono text-[6.5px] text-slate-400 truncate">{scaffold.smiles}</span>
+        <div className="flex gap-2">
+          <span className="font-mono text-[7px] text-slate-500">{scaffold.chemotype}</span>
+          <span className="font-mono text-[7px] text-slate-400">·</span>
+          <span className="font-mono text-[7px] text-slate-400">MW {scaffold.mw}</span>
+        </div>
+      </div>
+
+      {/* hover info panel — slides in below on hover */}
+      {showInfo && extra && (
+        <div className="absolute left-0 right-0 z-40 mt-1 rounded-xl border border-slate-200 bg-white shadow-lg px-3 py-2.5 flex flex-col gap-1.5"
+          style={{ top: "100%", borderColor: scaffold.color + "40" }}>
+          <div className="font-mono text-[8px] font-semibold text-slate-700 mb-0.5" style={{ color: scaffold.color }}>{scaffold.name}</div>
+          {[
+            ["Cells", extra.cells],
+            ["GelMA", extra.gelma],
+            ["Alginate", extra.alginate],
+            ["CaCl₂", extra.cacl2],
+            ["Crosslink", extra.crosslink],
+          ].map(([k,v]) => (
+            <div key={k} className="flex justify-between items-center">
+              <span className="font-mono text-[7px] text-slate-400">{k}</span>
+              <span className="font-mono text-[7px] text-slate-700 font-medium">{v}</span>
+            </div>
+          ))}
+          <p className="font-mono text-[6.5px] text-slate-400 leading-relaxed border-t border-slate-100 pt-1 mt-0.5">{extra.notes}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScaffoldViewer({ tissueKey }: { tissueKey: string }) {
+  const [active, setActive] = useState(tissueKey);
+  const sel = SCAFFOLD_STRUCTURES.find(s => s.id === active) ?? SCAFFOLD_STRUCTURES[0];
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Scaffold Library</span>
+        <span className="font-mono text-[7px] px-2 py-0.5 rounded-full border" style={{ borderColor: sel.color + "50", color: sel.color, background: sel.color + "10" }}>Lead compound</span>
+      </div>
+      {/* 4 cards in a 2×2 grid — each card shows hover info panel */}
+      <div className="grid grid-cols-2 gap-2 relative">
+        {SCAFFOLD_STRUCTURES.map(s => (
+          <MoleculeCard key={s.id} scaffold={s} selected={s.id === active} onClick={() => setActive(s.id)} />
         ))}
       </div>
     </div>
@@ -287,10 +391,10 @@ function TissueViewer3D({ result, viability, physics }: { result: SimResult; via
 
 function EnergyMiniChart({ data, stroke, grad, label, unit, mean }: { data:{t:number;v:number}[]; stroke:string; grad:string; label:string; unit:string; mean:string }) {
   return (
-    <div className="bg-[#0f172a] rounded-xl p-3 border border-[#1e293b]">
+    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100">
       <div className="flex items-center gap-2 mb-1">
         <span className="text-[8.5px] font-mono" style={{ color:stroke }}>{label}</span>
-        <span className="text-[7.5px] font-mono text-[#475569] ml-auto">Mean: {mean} {unit}</span>
+        <span className="text-[7.5px] font-mono text-slate-400 ml-auto">Mean: {mean} {unit}</span>
       </div>
       <ResponsiveContainer width="100%" height={48}>
         <AreaChart data={data} margin={{ top:2,right:6,bottom:0,left:-16 }}>
@@ -298,7 +402,7 @@ function EnergyMiniChart({ data, stroke, grad, label, unit, mean }: { data:{t:nu
             <stop offset="5%"  stopColor={stroke} stopOpacity={0.35} />
             <stop offset="95%" stopColor={stroke} stopOpacity={0} />
           </linearGradient></defs>
-          <YAxis tick={{ fontFamily:"monospace",fontSize:7,fill:"#475569" }} axisLine={false} tickLine={false} domain={["auto","auto"]} />
+          <YAxis tick={{ fontFamily:"monospace",fontSize:7,fill:"#94a3b8" }} axisLine={false} tickLine={false} domain={["auto","auto"]} />
           <Area type="monotone" dataKey="v" stroke={stroke} strokeWidth={1.5} fill={`url(#${grad})`} dot={false} />
         </AreaChart>
       </ResponsiveContainer>
@@ -399,6 +503,239 @@ function MetabolicRadar({ metabolic }: { metabolic: Metabolic }) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// TISSUE NETWORK GRAPH
+// ─────────────────────────────────────────────────────────────────
+
+interface NetNode { id: string; label: string; color: string; r: number; x: number; y: number; vx: number; vy: number; pct: number; el?: string }
+interface NetEdge { a: string; b: string; strength: number; label: string }
+
+const NETWORK_EDGES: Record<string, NetEdge[]> = {
+  skin_dermis: [
+    { a:"GelMA",   b:"Cells",    strength:0.9, label:"cell adhesion" },
+    { a:"GelMA",   b:"Alginate", strength:0.7, label:"polymer blend" },
+    { a:"Alginate",b:"CaCl₂",   strength:1.0, label:"ionic crosslink" },
+    { a:"CaCl₂",  b:"Photoinitiator", strength:0.5, label:"UV activation" },
+    { a:"Photoinitiator",b:"GelMA", strength:0.8, label:"photo-polymerization" },
+    { a:"Cells",   b:"Alginate", strength:0.6, label:"ECM mimicry" },
+  ],
+  skin_epidermis: [
+    { a:"GelMA",   b:"Cells",    strength:0.95,label:"keratinocyte anchor" },
+    { a:"GelMA",   b:"Alginate", strength:0.6, label:"polymer blend" },
+    { a:"Photoinitiator",b:"GelMA", strength:0.85,label:"UV cure" },
+    { a:"Alginate",b:"Cells",    strength:0.5, label:"barrier support" },
+  ],
+  cartilage: [
+    { a:"Alginate",b:"GelMA",   strength:0.8, label:"IPN network" },
+    { a:"Alginate",b:"CaCl₂",  strength:1.0, label:"ionic gelation" },
+    { a:"GelMA",   b:"Cells",   strength:0.9, label:"chondrocyte niche" },
+    { a:"CaCl₂",  b:"Cells",   strength:0.4, label:"Ca²⁺ signaling" },
+    { a:"Alginate",b:"Cells",   strength:0.7, label:"ECM load transfer" },
+  ],
+  corneal: [
+    { a:"GelMA",   b:"Cells",   strength:0.95,label:"limbal anchor" },
+    { a:"GelMA",   b:"Alginate",strength:0.55,label:"optical clarity" },
+    { a:"Photoinitiator",b:"GelMA",strength:0.9,label:"UV 365nm" },
+    { a:"Alginate",b:"Cells",   strength:0.45,label:"LSC support" },
+  ],
+};
+
+function TissueNetworkGraph({ result, viability }: { result: SimResult; viability: Viability }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const frameRef  = useRef(0);
+  const nodesRef  = useRef<NetNode[]>([]);
+  const hoveredRef = useRef<string | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<NetNode | null>(null);
+  const mouseRef = useRef({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current; if (!canvas) return;
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H / 2;
+    const stack = TISSUE_STACKS[result.tissue_key] ?? TISSUE_STACKS.skin_dermis;
+    const edges = NETWORK_EDGES[result.tissue_key] ?? NETWORK_EDGES.skin_dermis;
+
+    // build nodes from stack layers
+    const total = stack.reduce((s, l) => s + l.h, 0);
+    const nodes: NetNode[] = stack.map((layer, i) => {
+      const angle = (i / stack.length) * Math.PI * 2 - Math.PI / 2;
+      const dist = 88;
+      return {
+        id: layer.mat,
+        label: layer.label,
+        color: MAT[layer.mat]?.color ?? "#94a3b8",
+        r: 14 + (layer.h / total) * 32,
+        x: cx + Math.cos(angle) * dist,
+        y: cy + Math.sin(angle) * dist,
+        vx: 0, vy: 0,
+        pct: layer.h,
+      };
+    });
+    nodesRef.current = nodes;
+
+    const getNode = (id: string) => nodes.find(n => n.id === id);
+
+    const hex2rgb = (hex: string) => ({ r: parseInt(hex.slice(1,3),16), g: parseInt(hex.slice(3,5),16), b: parseInt(hex.slice(5,7),16) });
+
+    const ctx = canvas.getContext("2d")!;
+    let tick = 0;
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      tick++;
+
+      // ── physics: spring-repel per frame ──
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i], b = nodes[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist2 = dx*dx + dy*dy + 0.001;
+          const dist = Math.sqrt(dist2);
+          const repel = (3200) / dist2;
+          a.vx -= repel * dx / dist; a.vy -= repel * dy / dist;
+          b.vx += repel * dx / dist; b.vy += repel * dy / dist;
+        }
+      }
+      edges.forEach(e => {
+        const a = getNode(e.a), b = getNode(e.b);
+        if (!a || !b) return;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx*dx + dy*dy) + 0.001;
+        const target = (a.r + b.r) * 1.8;
+        const stretch = (dist - target) * 0.06 * e.strength;
+        a.vx += stretch * dx / dist; a.vy += stretch * dy / dist;
+        b.vx -= stretch * dx / dist; b.vy -= stretch * dy / dist;
+      });
+      // center pull + damping
+      nodes.forEach(n => {
+        n.vx += (cx - n.x) * 0.012; n.vy += (cy - n.y) * 0.012;
+        n.vx *= 0.78; n.vy *= 0.78;
+        n.x += n.vx; n.y += n.vy;
+        n.x = Math.max(n.r + 4, Math.min(W - n.r - 4, n.x));
+        n.y = Math.max(n.r + 4, Math.min(H - n.r - 4, n.y));
+      });
+
+      // ── draw edges ──
+      edges.forEach(e => {
+        const a = getNode(e.a), b = getNode(e.b);
+        if (!a || !b) return;
+        const isHovered = hoveredRef.current === a.id || hoveredRef.current === b.id;
+        const rgb = hex2rgb(a.color);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${isHovered ? 0.55 : 0.18})`;
+        ctx.lineWidth = isHovered ? e.strength * 2.5 : e.strength * 1.2;
+        ctx.stroke();
+
+        // edge label on hover
+        if (isHovered) {
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          ctx.font = "7px monospace"; ctx.textAlign = "center";
+          ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.85)`;
+          ctx.fillText(e.label, mx, my - 3);
+        }
+      });
+
+      // ── draw nodes ──
+      nodes.forEach(n => {
+        const isH = hoveredRef.current === n.id;
+        const pulse = Math.sin(tick * 0.04 + n.x * 0.05) * (isH ? 3 : 1.5);
+        const rgb = hex2rgb(n.color);
+
+        // glow
+        const grad = ctx.createRadialGradient(n.x, n.y, 0, n.x, n.y, n.r + pulse + 10);
+        grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},${isH ? 0.22 : 0.1})`);
+        grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + pulse + 10, 0, Math.PI * 2);
+        ctx.fillStyle = grad; ctx.fill();
+
+        // fill
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${isH ? 0.18 : 0.1})`;
+        ctx.fill();
+
+        // border
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r + pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${isH ? 0.9 : 0.5})`;
+        ctx.lineWidth = isH ? 2 : 1.2; ctx.stroke();
+
+        // material symbol in center
+        ctx.font = `bold ${isH ? 11 : 9}px monospace`;
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = n.color; ctx.globalAlpha = isH ? 1 : 0.85;
+        const sym = n.id === "GelMA" ? "G" : n.id === "Alginate" ? "Alg" : n.id === "CaCl₂" ? "Ca" : n.id === "Photoinitiator" ? "UV" : n.id === "Cells" ? "●" : n.id.slice(0,3);
+        ctx.fillText(sym, n.x, n.y - 1);
+        ctx.globalAlpha = 1;
+
+        // pct label below symbol
+        ctx.font = "6px monospace"; ctx.fillStyle = n.color; ctx.globalAlpha = 0.7;
+        ctx.fillText(`${Math.round(n.pct * 100)}%`, n.x, n.y + 9);
+        ctx.globalAlpha = 1; ctx.textBaseline = "alphabetic";
+      });
+
+      frameRef.current = requestAnimationFrame(draw);
+    }
+
+    draw();
+
+    const onMove = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = (e.clientX - rect.left) * (W / rect.width);
+      const my = (e.clientY - rect.top) * (H / rect.height);
+      mouseRef.current = { x: mx, y: my };
+      const hit = nodes.find(n => Math.hypot(mx - n.x, my - n.y) < n.r + 6);
+      hoveredRef.current = hit?.id ?? null;
+      setHoveredNode(hit ?? null);
+    };
+    const onLeave = () => { hoveredRef.current = null; setHoveredNode(null); };
+    canvas.addEventListener("mousemove", onMove);
+    canvas.addEventListener("mouseleave", onLeave);
+    return () => { cancelAnimationFrame(frameRef.current); canvas.removeEventListener("mousemove", onMove); canvas.removeEventListener("mouseleave", onLeave); };
+  }, [result, viability]);
+
+  return (
+    <div className="relative flex flex-col h-full">
+      <div className="flex items-center justify-between mb-1.5 shrink-0">
+        <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Tissue Network — {result.formulation.display}</span>
+        <span className="font-mono text-[7px] text-slate-300">hover nodes for details</span>
+      </div>
+      <div className="relative flex-1 min-h-0 rounded-xl border border-slate-100 overflow-hidden bg-white">
+        <canvas ref={canvasRef} width={440} height={300} className="w-full h-full" style={{ display: "block" }} />
+        {hoveredNode && (
+          <div className="absolute bottom-3 left-3 rounded-xl border border-slate-200 bg-white/95 backdrop-blur-sm px-3 py-2 shadow-md pointer-events-none">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-2 h-2 rounded-full" style={{ background: hoveredNode.color }} />
+              <span className="font-mono text-[9px] font-semibold text-slate-700">{hoveredNode.label}</span>
+            </div>
+            {(() => {
+              const extra = SCAFFOLD_EXTRA[result.tissue_key];
+              const matRows: [string, string][] = hoveredNode.id === "GelMA" ? [["Conc", extra?.gelma ?? "—"],["Role","Photopolymer backbone"],["MW","~85 kDa"]]
+                : hoveredNode.id === "Alginate" ? [["Conc", extra?.alginate ?? "—"],["Role","Hydrogel network"],["Source","Brown algae"]]
+                : hoveredNode.id === "CaCl₂" ? [["Conc", extra?.cacl2 ?? "—"],["Role","Ionic crosslinker"],["Ion","Ca²⁺ 40.08 g/mol"]]
+                : hoveredNode.id === "Photoinitiator" ? [["Protocol", extra?.crosslink ?? "—"],["Role","Radical initiator"],["Type","LAP / I2959"]]
+                : hoveredNode.id === "Cells" ? [["Density", extra?.cells ?? "—"],["Viability 24h",`${viability["24h"]}%`],["Viability 72h",`${viability["72h"]}%`]]
+                : [["Fraction", `${Math.round(hoveredNode.pct * 100)}%`]];
+              return matRows.map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-6">
+                  <span className="font-mono text-[7px] text-slate-400">{k}</span>
+                  <span className="font-mono text-[7px] text-slate-700 font-medium">{v}</span>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
+      </div>
+      {/* material legend */}
+      <div className="flex flex-wrap gap-2 mt-2 shrink-0">
+        {(TISSUE_STACKS[result.tissue_key] ?? TISSUE_STACKS.skin_dermis).map(layer => (
+          <span key={layer.mat} className="flex items-center gap-1 font-mono text-[7px] text-slate-500">
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: MAT[layer.mat]?.color ?? "#94a3b8" }} />
+            {MAT[layer.mat]?.label ?? layer.mat} {Math.round(layer.h * 100)}%
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
 // GENE SEQUENCE VIEWER
 // ─────────────────────────────────────────────────────────────────
 
@@ -458,99 +795,8 @@ function GeneSequenceViewer({ genes }: { genes: [string,string,string,string][] 
 // RISK BANNER
 // ─────────────────────────────────────────────────────────────────
 
-function RiskBanner() {
-  return (
-    <div className="flex rounded-xl overflow-hidden border border-slate-200">
-      <div className="bg-slate-900 px-5 py-3 flex flex-col gap-0.5 flex-1">
-        <span className="font-mono text-[7px] text-slate-500 uppercase tracking-widest">Population baseline</span>
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-[28px] font-light text-white leading-none">55%</span>
-          <span className="font-mono text-[9px] text-slate-400">rejection risk</span>
-        </div>
-        <span className="font-mono text-[7.5px] text-slate-500">Long-run without simulation-guided protocols</span>
-      </div>
-      <div className="w-px bg-slate-700" />
-      <div className="bg-slate-900 px-5 py-3 flex flex-col gap-0.5 flex-1">
-        <span className="font-mono text-[7px] text-slate-500 uppercase tracking-widest">Zyogen model</span>
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-[28px] font-light leading-none" style={{ color:"#4ade80" }}>2–3%</span>
-          <span className="font-mono text-[9px] text-slate-400">rejection risk</span>
-        </div>
-        <span className="font-mono text-[7.5px] text-slate-500">Physics + HLA + metabolic, patient-matched bioink</span>
-      </div>
-      <div className="w-px bg-slate-700" />
-      <div className="bg-slate-950 px-5 py-3 flex flex-col gap-2 justify-center min-w-40">
-        {[["Baseline","55%","#ef4444",55],["Zyogen","2–3%","#4ade80",3]].map(([label,val,color,w])=>(
-          <div key={label as string}>
-            <div className="flex justify-between mb-0.5">
-              <span className="font-mono text-[7px] text-slate-500">{label as string}</span>
-              <span className="font-mono text-[7px]" style={{ color:color as string }}>{val as string}</span>
-            </div>
-            <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width:`${w}%`, background:color as string }} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// RiskBanner removed — replaced by stat pills in the tab header area
 
-// ─────────────────────────────────────────────────────────────────
-// SCAFFOLD CARDS
-// ─────────────────────────────────────────────────────────────────
-
-const SCAFFOLD_META: Record<string,{ chemotype:string; mw:string; cells:string }> = {
-  skin_dermis:    { chemotype:"Fibrous ECM",   mw:"~85 kDa",  cells:"HDF 1×10⁶/mL" },
-  skin_epidermis: { chemotype:"Sheet",         mw:"~72 kDa",  cells:"NHEK 1×10⁶/mL" },
-  cartilage:      { chemotype:"Load-bearing",  mw:"~110 kDa", cells:"Chondro 2×10⁶/mL" },
-  corneal:        { chemotype:"Transparent",   mw:"~68 kDa",  cells:"LSC 5×10⁵/mL" },
-};
-
-function ScaffoldCards({ selectedId, onSelect }: { selectedId: string|null; onSelect:(id:string)=>void }) {
-  const defs = [
-    { id:"skin_dermis",    name:"Skin Dermis",   formula:"GelMA 5% · Alg 3%" },
-    { id:"skin_epidermis", name:"Skin Epidermis",formula:"GelMA 8% · Alg 2%" },
-    { id:"cartilage",      name:"Cartilage",     formula:"GelMA 10% · Alg 4%" },
-    { id:"corneal",        name:"Corneal Graft", formula:"GelMA 6% · Alg 2%" },
-  ];
-  return (
-    <div className="flex flex-col gap-2">
-      {defs.map(s => {
-        const isSelected = s.id === selectedId;
-        const meta = SCAFFOLD_META[s.id];
-        return (
-          <div key={s.id} onClick={() => onSelect(s.id)}
-            className="rounded-xl border cursor-pointer transition-all"
-            style={{ background:isSelected?"#f0f9ff":"#fff", borderColor:isSelected?"#3b82f6":"#e2e8f0", boxShadow:isSelected?"0 0 0 1px #3b82f6":"none" }}>
-            <div className="flex gap-2.5 p-2.5">
-              <ScaffoldDiagram tissueId={s.id} size={68} />
-              <div className="flex flex-col flex-1 min-w-0 gap-1">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[11px] font-semibold text-slate-800">{s.name}</span>
-                  {isSelected && <span className="font-mono text-[7.5px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">Selected ✓</span>}
-                </div>
-                <div className="flex gap-1">
-                  <span className="font-mono text-[7px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">FORMULATION</span>
-                  <span className="font-mono text-[7px] px-1.5 py-0.5 rounded text-emerald-700" style={{ background:"#dcfce7" }}>Valid</span>
-                </div>
-                <span className="font-mono text-[8px] text-slate-400 truncate">{s.formula}</span>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                  {[["Chemotype",meta.chemotype],["MW",meta.mw],["Cells",meta.cells],["Nozzle","22–27G"]].map(([k,v])=>(
-                    <div key={k} className="flex justify-between">
-                      <span className="font-mono text-[7px] text-slate-400">{k}</span>
-                      <span className="font-mono text-[7px] text-slate-600">{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────
 // PROPERTY TABLE
@@ -762,158 +1008,198 @@ function AIChatRail({ result, onRunSim, running }: {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// DASHBOARD — left panel full scrollable content
+// DASHBOARD
 // ─────────────────────────────────────────────────────────────────
 
+function HistoryDropdown({ runs, onLoad }: { runs: RunListItem[]; onLoad: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`font-mono text-[9px] px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors ${open ? "bg-slate-900 text-white" : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"}`}>
+        History{runs.length > 0 && <span className="font-mono text-[7px] px-1.5 py-0.5 rounded-full bg-slate-200 text-slate-600">{runs.length}</span>}
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 w-96 z-50 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+            <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Simulation history</span>
+            <span className="font-mono text-[7.5px] text-slate-300">{runs.length} runs</span>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {runs.length === 0 && (
+              <div className="px-4 py-8 text-center">
+                <p className="font-mono text-[10px] text-slate-300">No runs yet</p>
+              </div>
+            )}
+            {runs.map(r => (
+              <div key={r.id} onClick={() => { onLoad(r.id); setOpen(false); }}
+                className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 cursor-pointer group border-b border-slate-50 last:border-0 transition-colors">
+                <ScaffoldDiagram tissueId={r.tissue_key} size={28} />
+                <div className="flex flex-col flex-1 min-w-0">
+                  <span className="font-mono text-[9.5px] text-slate-700 truncate">{r.label}</span>
+                  <span className="font-mono text-[7.5px] text-slate-400">{r.id.slice(0,8)} · {r.created_at.slice(0,16).replace("T"," ")}</span>
+                </div>
+                <span className="font-mono text-[8px] px-2 py-0.5 rounded-full shrink-0" style={{ background: riskBg(r.risk_tier), color: riskColor(r.risk_tier) }}>{r.risk_tier}</span>
+                <span className="font-mono text-[8.5px] text-slate-400 shrink-0">v24h {fmt(r.viability_24h)}%</span>
+                <span className="font-mono text-[8.5px] text-slate-300 opacity-0 group-hover:opacity-100 shrink-0 transition-opacity">→</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Dashboard({ result, runs, onLoad }: { result: SimResult|null; runs: RunListItem[]; onLoad:(id:string)=>void }) {
-  const [tab, setTab] = useState<"overview"|"sequence"|"longterm"|"history">("overview");
+  const [tab, setTab] = useState<"main"|"longterm">("main");
 
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* tab bar */}
-      <div className="shrink-0 flex items-center gap-1 px-5 pt-4 pb-3 border-b border-slate-100">
-        {(["overview","sequence","longterm","history"] as const).map(t=>(
-          <button key={t} onClick={()=>setTab(t)}
-            className={`font-mono text-[9px] px-3 py-1.5 rounded-lg capitalize transition-colors ${tab===t?"bg-slate-900 text-white":"text-slate-400 hover:text-slate-700 hover:bg-slate-50"}`}>
-            {t==="longterm"?"Long term":t}{t==="history"&&runs.length>0?` (${runs.length})`:""}
+      <div className="shrink-0 flex items-center gap-1 px-5 pt-3 pb-2.5 border-b border-slate-100">
+        {([["main","Overview & Sequence"],["longterm","Long Term"]] as const).map(([t, label]) => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`font-mono text-[9px] px-3 py-1.5 rounded-lg transition-colors ${tab===t?"bg-slate-900 text-white":"text-slate-400 hover:text-slate-700 hover:bg-slate-50"}`}>
+            {label}
           </button>
         ))}
+        <div className="ml-auto">
+          <HistoryDropdown runs={runs} onLoad={onLoad} />
+        </div>
       </div>
 
-      {/* scrollable body */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 min-h-0">
+      {/* body — overflow-hidden, no scroll */}
+      <div className="flex-1 overflow-hidden px-4 py-3 min-h-0">
 
-        {/* no result state */}
-        {!result && tab !== "history" && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 py-24">
-            <div className="w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0 0h18"/></svg>
+        {/* empty state */}
+        {!result && (
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="1.5"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0 0h18"/></svg>
             </div>
-            <p className="font-mono text-[11px] text-slate-400 text-center leading-relaxed">
-              Describe a patient in the chat →<br />or use a quick demo button
-            </p>
+            <p className="font-mono text-[10px] text-slate-400 text-center leading-relaxed">Describe a patient in the chat →<br />or use a quick demo button</p>
           </div>
         )}
 
-        {/* ── OVERVIEW ── */}
-        {result && tab === "overview" && (
-          <div className="flex flex-col gap-5">
-            {/* risk banner */}
-            <RiskBanner />
+        {/* ── MAIN TAB ── */}
+        {result && tab === "main" && (
+          <div className="h-full grid grid-cols-[minmax(0,2.2fr)_minmax(0,1.4fr)_minmax(0,1.2fr)] gap-3">
 
-            {/* headline stats */}
-            <div className="grid grid-cols-4 gap-3">
-              {[
-                { label:"Viability 24h",  value:`${result.stages.viability["24h"]}%`, color:result.stages.viability["24h"]>80?"#16a34a":"#d97706" },
-                { label:"Viability 72h",  value:`${result.stages.viability["72h"]}%`, color:result.stages.viability["72h"]>70?"#16a34a":"#d97706" },
-                { label:"Rejection",      value:pct(result.stages.rejection.rejection_probability), color:riskColor(result.stages.rejection.risk_tier) },
-                { label:"Print Quality",  value:`${fmt(result.stages.physics.quality_score*100,0)}%`, color:result.stages.physics.quality_score>0.7?"#16a34a":"#d97706" },
-              ].map(s=>(
-                <div key={s.label} className="bg-slate-50 border border-slate-100 rounded-xl p-3 flex flex-col gap-1">
-                  <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">{s.label}</span>
-                  <span className="font-mono text-[22px] font-light leading-none" style={{ color:s.color }}>{s.value}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* 3-col: scaffold cards | 3D viewer + charts | right panel */}
-            <div className="grid grid-cols-[220px_1fr_200px] gap-4">
-              {/* scaffold library */}
-              <div className="flex flex-col gap-2">
-                <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Scaffold Library</span>
-                <ScaffoldCards selectedId={result.tissue_key} onSelect={()=>{}} />
-              </div>
-
-              {/* 3D + energy */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="font-mono text-[8px] text-slate-400">Live · {result.stages.physics.print_time.n_layers} layers · {result.stages.physics.print_time.estimated_minutes}min</span>
-                  <span className="font-mono text-[8px] text-slate-300 ml-auto">{result.formulation.display}</span>
-                </div>
-                <TissueViewer3D result={result} viability={result.stages.viability} physics={result.stages.physics} />
-                <SimEnergyCharts viability={result.stages.viability} physics={result.stages.physics} />
-              </div>
-
-              {/* property table */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-slate-700">{result.formulation.display}</span>
-                </div>
-                <PropertyTable result={result} />
-                <div className="border border-slate-200 rounded-xl p-3">
-                  <MetabolicRadar metabolic={result.stages.metabolic} />
-                </div>
-              </div>
-            </div>
-
-            {/* HLA full width */}
-            <div className="border border-slate-200 rounded-xl p-4">
-              <HLAMap rejection={result.stages.rejection} />
-            </div>
-
-            {/* flags */}
-            {result.flags.length > 0 && (
-              <div className="flex flex-col gap-1.5">
-                <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Anomaly Flags</span>
-                {result.flags.map((f,i)=>(
-                  <div key={i} className="flex items-start gap-2 px-3 py-2 rounded-lg border text-[8.5px] font-mono"
-                    style={{ background:f.severity==="error"?"#fef2f2":"#fffbeb", borderColor:f.severity==="error"?"#fecaca":"#fde68a" }}>
-                    <span className="font-semibold shrink-0" style={{ color:f.severity==="error"?"#dc2626":"#92400e" }}>{f.field}</span>
-                    <span className="text-slate-500">{f.flag||f.error}</span>
-                    {f.value!==undefined && <span className="ml-auto shrink-0 text-slate-400">{f.value} · ref {f.normal_range}</span>}
+            {/* Col 1: Tissue network (hero) + scaffold molecule strip */}
+            <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
+              {/* stat pills row */}
+              <div className="flex gap-2 shrink-0">
+                {[
+                  { label:"Viability 24h", value:`${result.stages.viability["24h"]}%`,              color:result.stages.viability["24h"]>80?"#16a34a":"#d97706" },
+                  { label:"Viability 72h", value:`${result.stages.viability["72h"]}%`,              color:result.stages.viability["72h"]>70?"#16a34a":"#d97706" },
+                  { label:"Rejection",     value:pct(result.stages.rejection.rejection_probability), color:riskColor(result.stages.rejection.risk_tier) },
+                  { label:"Print Q",       value:`${fmt(result.stages.physics.quality_score*100,0)}%`,color:result.stages.physics.quality_score>0.7?"#16a34a":"#d97706" },
+                ].map(s => (
+                  <div key={s.label} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 flex flex-col gap-0.5">
+                    <span className="font-mono text-[6.5px] text-slate-400 uppercase tracking-widest">{s.label}</span>
+                    <span className="font-mono text-[18px] font-light leading-none" style={{ color: s.color }}>{s.value}</span>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        )}
 
-        {/* ── SEQUENCE ── */}
-        {result && tab === "sequence" && (
-          <div className="grid grid-cols-[1fr_220px] gap-5">
-            <div className="flex flex-col gap-4">
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Gene Expression — {result.formulation.display}</span>
-                  <span className="font-mono text-[7.5px] text-slate-300">{result.genes.length} genes</span>
-                </div>
-                <GeneSequenceViewer genes={result.genes} />
+              {/* tissue network — hero */}
+              <div className="flex-1 min-h-0">
+                <TissueNetworkGraph result={result} viability={result.stages.viability} />
               </div>
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col gap-2">
-                <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Physics Breakdown</span>
+
+              {/* scaffold molecule strip */}
+              <div className="shrink-0">
+                <ScaffoldViewer tissueKey={result.tissue_key} />
+              </div>
+            </div>
+
+            {/* Col 2: HLA → Bioprint & Drug-likeness → Physics bars → Flags */}
+            <div className="flex flex-col gap-3 min-h-0 overflow-y-auto">
+              <div className="border border-slate-100 rounded-xl p-3 shrink-0">
+                <HLAMap rejection={result.stages.rejection} />
+              </div>
+              <div className="shrink-0">
+                <PropertyTable result={result} />
+              </div>
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2 shrink-0">
+                <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Physics</span>
                 {[
-                  { label:"Crosslink uniformity", val:result.stages.physics.crosslink_uniformity, thresh:0.65 },
-                  { label:"Shape retention",      val:result.stages.physics.shape_retention_score, thresh:0.70 },
-                  { label:"Print quality",        val:result.stages.physics.quality_score, thresh:0.65 },
-                  { label:"Metabolic composite",  val:result.stages.metabolic.composite, thresh:0.60 },
-                ].map(({ label,val,thresh })=>(
-                  <div key={label} className="flex items-center gap-3">
-                    <span className="font-mono text-[8.5px] text-slate-400 w-38 shrink-0">{label}</span>
-                    <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                  { label:"Crosslink", val:result.stages.physics.crosslink_uniformity,  thresh:0.65 },
+                  { label:"Shape",     val:result.stages.physics.shape_retention_score, thresh:0.70 },
+                  { label:"Print Q",   val:result.stages.physics.quality_score,         thresh:0.65 },
+                  { label:"Metabolic", val:result.stages.metabolic.composite,           thresh:0.60 },
+                ].map(({ label, val, thresh }) => (
+                  <div key={label} className="flex items-center gap-2">
+                    <span className="font-mono text-[7.5px] text-slate-400 w-14 shrink-0">{label}</span>
+                    <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
                       <div className="h-full rounded-full" style={{ width:`${val*100}%`, background:val>=thresh?"#3b82f6":val>=thresh*0.8?"#d97706":"#ef4444" }} />
                     </div>
-                    <span className="font-mono text-[8.5px] text-slate-600 w-9 text-right">{fmt(val*100,0)}%</span>
+                    <span className="font-mono text-[7.5px] text-slate-500 w-7 text-right">{fmt(val*100,0)}%</span>
                   </div>
                 ))}
               </div>
+              {result.flags.length > 0 && (
+                <div className="flex flex-col gap-1 shrink-0">
+                  <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Flags</span>
+                  {result.flags.map((f, i) => (
+                    <div key={i} className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg border text-[7.5px] font-mono"
+                      style={{ background:f.severity==="error"?"#fef2f2":"#fffbeb", borderColor:f.severity==="error"?"#fecaca":"#fde68a" }}>
+                      <span className="font-semibold shrink-0" style={{ color:f.severity==="error"?"#dc2626":"#92400e" }}>{f.field}</span>
+                      <span className="text-slate-500 truncate">{f.flag||f.error}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div className="flex flex-col gap-3">
-              <TissueViewer3D result={result} viability={result.stages.viability} physics={result.stages.physics} />
-              <PropertyTable result={result} />
+
+            {/* Col 3: Gene expression → Signal traces → Metabolic radar */}
+            <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2 flex-1 min-h-0">
+                <div className="flex items-center justify-between shrink-0">
+                  <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Gene Expression</span>
+                  <span className="font-mono text-[7px] text-slate-300">{result.genes.length} genes</span>
+                </div>
+                <div className="overflow-y-auto flex-1 min-h-0">
+                  <GeneSequenceViewer genes={result.genes} />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 shrink-0">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                  <span className="font-mono text-[7.5px] text-slate-400">Signal traces</span>
+                </div>
+                <SimEnergyCharts viability={result.stages.viability} physics={result.stages.physics} />
+              </div>
+              <div className="border border-slate-100 rounded-xl p-3 shrink-0">
+                <MetabolicRadar metabolic={result.stages.metabolic} />
+              </div>
             </div>
           </div>
         )}
 
         {/* ── LONG TERM ── */}
         {result && tab === "longterm" && (
-          <div className="flex flex-col gap-4">
-            <div className="border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
+          <div className="h-full flex flex-col gap-3">
+            <div className="border border-slate-100 rounded-xl p-4 flex flex-col gap-3 flex-1 min-h-0">
+              <div className="flex items-center justify-between shrink-0">
                 <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">6-Month Viability + Rejection Model</span>
                 <span className="font-mono text-[7.5px] text-slate-300">Extrapolated — not clinical</span>
               </div>
-              <ResponsiveContainer width="100%" height={260}>
+              <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={buildLongTerm(result.stages.viability,result.stages.rejection)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="t" tick={{ fontFamily:"monospace",fontSize:9,fill:"#94a3b8" }} />
@@ -926,48 +1212,29 @@ function Dashboard({ result, runs, onLoad }: { result: SimResult|null; runs: Run
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col gap-2">
-                <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Expression Timeline</span>
+            <div className="grid grid-cols-2 gap-3 shrink-0">
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2">
+                <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Expression Timeline</span>
                 {[
                   { stage:"Stage 1",time:"0–24h",   note:"Scaffold formation. HLA suppression. Critical viability window." },
                   { stage:"Stage 2",time:"24–72h",  note:"Cell proliferation. TGFB1 immune modulation." },
                   { stage:"Stage 3",time:"3–7d",    note:"Tissue maturation. Gene normalisation." },
                   { stage:"Stage 4",time:"7–30d",   note:"Integration window. Rejection risk peaks." },
                   { stage:"Stage 5",time:"30–180d", note:"Chronic phase. HLA dominates outcome." },
-                ].map((s,i)=>(
+                ].map((s, i) => (
                   <div key={i} className="flex gap-3 border-b border-slate-50 pb-1.5 last:border-0">
-                    <div className="w-14 shrink-0"><div className="font-mono text-[9px] text-slate-700">{s.stage}</div><div className="font-mono text-[7px] text-slate-400">{s.time}</div></div>
-                    <p className="font-mono text-[8.5px] text-slate-500 leading-relaxed">{s.note}</p>
+                    <div className="w-14 shrink-0">
+                      <div className="font-mono text-[8.5px] text-slate-700">{s.stage}</div>
+                      <div className="font-mono text-[7px] text-slate-400">{s.time}</div>
+                    </div>
+                    <p className="font-mono text-[7.5px] text-slate-500 leading-relaxed">{s.note}</p>
                   </div>
                 ))}
               </div>
-              <div className="border border-slate-200 rounded-xl p-4">
+              <div className="border border-slate-100 rounded-xl p-3">
                 <MetabolicRadar metabolic={result.stages.metabolic} />
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ── HISTORY ── */}
-        {tab === "history" && (
-          <div className="flex flex-col gap-2">
-            {runs.length === 0 && (
-              <div className="text-center py-16"><p className="font-mono text-[10px] text-slate-300">No runs yet — describe a patient in the chat.</p></div>
-            )}
-            {runs.map(r=>(
-              <div key={r.id} onClick={()=>onLoad(r.id)}
-                className="flex items-center gap-3 border border-slate-100 rounded-xl px-4 py-2.5 hover:bg-slate-50 cursor-pointer group transition-colors">
-                <ScaffoldDiagram tissueId={r.tissue_key} size={32} />
-                <div className="flex flex-col flex-1 min-w-0">
-                  <span className="font-mono text-[10px] text-slate-700 truncate">{r.label}</span>
-                  <span className="font-mono text-[8px] text-slate-400">{r.id.slice(0,8)} · {r.created_at.slice(0,16).replace("T"," ")}</span>
-                </div>
-                <span className="font-mono text-[8.5px] px-2 py-0.5 rounded-full" style={{ background:riskBg(r.risk_tier),color:riskColor(r.risk_tier) }}>{r.risk_tier}</span>
-                <span className="font-mono text-[9px] text-slate-400">v24h {fmt(r.viability_24h)}%</span>
-                <span className="font-mono text-[9px] text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity">load →</span>
-              </div>
-            ))}
           </div>
         )}
       </div>
