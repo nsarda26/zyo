@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 from typing import Optional
 
-client = OpenAI(api_key="sk-xxxxx")
+client = OpenAI(api_key="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")
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIG
