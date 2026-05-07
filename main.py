@@ -268,7 +268,12 @@ def compute_rejection_risk(hla_patient: dict, immune_flags: dict, bio: dict) -> 
     # HLA mismatch logic
     hla_keys = ["HLA_A1","HLA_A2","HLA_B1","HLA_B2","HLA_DR1","HLA_DR2"]
     typed = sum(1 for k in hla_keys if hla_patient.get(k))
-    assumed_mismatches = max(0, 6 - typed)
+    # hla_confirmed_match means all loci are matched — treat as 0 mismatches
+    # regardless of whether individual locus values were typed in.
+    if immune_flags.get("hla_confirmed_match"):
+        assumed_mismatches = 0
+    else:
+        assumed_mismatches = max(0, 6 - typed)
     base_risk = HLA_MISMATCH_RISK.get(assumed_mismatches, 0.5)
 
     modifiers = []
