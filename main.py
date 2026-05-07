@@ -879,28 +879,47 @@ class AgentPayload(BaseModel):
 AGENT_SYSTEM = """You are the Zyogen BioSim agentic assistant.
 You decide what action to take based on the user's message and current simulation state.
 
-You MUST return ONLY a JSON object — no prose, no markdown:
+You MUST return ONLY a valid JSON object — no prose, no markdown, no code fences.
 
 {
   "action": "<one of: simulate | answer | show_card | modify_params | clarify>",
-  "text": "<short conversational reply to show in chat, plain string>",
-  "card": null | {
-    "type": "<one of: stats | viability | rejection | physics | metabolic | hla | flags | longterm | gene | comparison>",
-    "title": "<card title string>"
-  },
-  "sim_payload": null | { ...full simulation payload if action=simulate },
-  "param_edits": null | { "tissue_key":..., "gelma_pct":..., "nozzle_gauge":..., "pressure_override":... }
+  "text": "<short conversational reply, plain string>",
+  "card": null | { "type": "<stats|viability|rejection|physics|metabolic|hla|flags|longterm|gene>", "title": "<string>" },
+  "sim_payload": null | { FULL payload — see format below },
+  "param_edits": null | { only the changed fields from: "nozzle_gauge", "gelma_pct", "pressure_override" }
 }
 
-Action rules:
-- "simulate": user is describing a new patient OR asking to run a simulation. Build sim_payload from the description.
-- "answer": user is asking a question about the current simulation — set card=null, write the answer in text.
-- "show_card": user wants to see a specific view (viability, rejection, physics etc.) — set the card type and a short text. Never re-simulate.
-- "modify_params": user wants to change a parameter (nozzle, GelMA, pressure) on the CURRENT run. Set param_edits with only the changed fields, text explains what will change. This chains from current run.
-- "clarify": not enough info. Ask in text, card=null.
+sim_payload format (ALL fields required when action=simulate):
+{
+  "tissue_key": "skin_dermis|skin_epidermis|cartilage|corneal",
+  "sex": "men|women",
+  "bio": {
+    "hemoglobin": <number g/dL>,
+    "glucose": <number mg/dL>,
+    "wbc": <number 10^3/µL, e.g. 7.0>,
+    "platelets": <number 10^3/µL, e.g. 250>,
+    "creatinine": <number mg/dL, e.g. 0.9>,
+    "igg": <number mg/dL, e.g. 1000>
+  },
+  "hla": {},
+  "immune_flags": { "autoimmune_active": false, "prior_rejection": false, "hla_confirmed_match": false },
+  "patient_meta": { "mechanical_load": "medium", "dimensions": { "length_mm": 20, "width_mm": 20, "depth_mm": 2 } }
+}
 
-For show_card and answer, NEVER trigger a new simulation. Use the existing data.
-sim_payload must use exact units: tissue_key skin_dermis|skin_epidermis|cartilage|corneal, sex men|women, bio values in standard lab units."""
+IMPORTANT bio unit rules:
+- wbc: 10^3/µL — 7800/cumm = 7.8
+- platelets: 10^3/µL — 250000 = 250
+- hemoglobin: g/dL — normal range ~12-17
+- glucose: mg/dL — normal ~70-99
+- creatinine: mg/dL — normal ~0.6-1.2
+- igg: mg/dL — normal ~700-1600
+
+Action rules:
+- "simulate": user describing a patient or asking to run. Build complete sim_payload.
+- "answer": question about current sim — text only, card null, no simulation.
+- "show_card": user wants to see a view — set card type, text explains it. Never re-simulate.
+- "modify_params": user wants to change nozzle/GelMA/pressure on current run. Set param_edits only.
+- "clarify": not enough info to simulate. Ask in text."""
 
 @app.post("/biosim/agent")
 def agent(body: AgentPayload):
@@ -936,6 +955,20 @@ def agent(body: AgentPayload):
         max_tokens=800,
     )
     result = json.loads(resp.choices[0].message.content)
+
+    # Ensure sim_payload always has required defaults so it doesn't 422
+    if result.get("action") == "simulate" and isinstance(result.get("sim_payload"), dict):
+        sp = result["sim_payload"]
+        sp.setdefault("hla", {})
+        sp.setdefault("immune_flags", {"autoimmune_active": False, "prior_rejection": False, "hla_confirmed_match": False})
+        sp.setdefault("patient_meta", {"mechanical_load": "medium", "dimensions": {"length_mm": 20, "width_mm": 20, "depth_mm": 2}})
+        bio = sp.setdefault("bio", {})
+        bio.setdefault("hemoglobin", 13.5)
+        bio.setdefault("glucose", 90.0)
+        bio.setdefault("wbc", 7.0)
+        bio.setdefault("platelets", 250.0)
+        bio.setdefault("creatinine", 0.9)
+        bio.setdefault("igg", 1000.0)
 
     # If modify_params, merge edits onto current sim payload and chain
     if result.get("action") == "modify_params" and body.current_run_id and result.get("param_edits"):

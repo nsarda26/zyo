@@ -644,20 +644,31 @@ function ChatMain({
         body: JSON.stringify({ message:msg, current_run_id: activeResult?.run_id ?? null, history }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail ?? "Agent error");
+      if (!res.ok) {
+        const detail = data.detail;
+        const msg = typeof detail === "string" ? detail
+          : Array.isArray(detail) ? detail.map((e: {loc?: unknown[]; msg?: string}) => `${(e.loc??[]).slice(-1)[0]}: ${e.msg}`).join(", ")
+          : JSON.stringify(detail);
+        throw new Error(`Agent error — ${msg}`);
+      }
 
       const action: string = data.action;
       const text: string   = data.text ?? "";
 
       if (action === "simulate" && data.sim_payload) {
         setMessages(prev => [...prev, { id:uid(), role:"assistant", text, ts:Date.now() }]);
-        // run simulation
         const simRes = await fetch(`${API}/biosim/runs`, {
           method:"POST", headers:{"Content-Type":"application/json"},
           body: JSON.stringify(data.sim_payload),
         });
         const simData = await simRes.json();
-        if (!simRes.ok) throw new Error(simData.detail ?? "Simulation failed");
+        if (!simRes.ok) {
+          const detail = simData.detail;
+          const msg = typeof detail === "string" ? detail
+            : Array.isArray(detail) ? detail.map((e: {loc?: unknown[]; msg?: string}) => `${(e.loc??[]).slice(-1)[0]}: ${e.msg}`).join(", ")
+            : JSON.stringify(detail);
+          throw new Error(`Simulation failed — ${msg}`);
+        }
         onResultChange(simData);
         // fetchRuns is triggered via parent
       } else if (action === "modify_params") {
