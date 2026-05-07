@@ -147,11 +147,16 @@ def compute_print_time(dimensions: dict, formulation: dict, speed_mms: float) ->
         "path_length_mm": round(path_per_layer_mm * n_layers, 0),
     }
 
-def run_physics(formulation: dict, pressure_mpa: float, dimensions: dict) -> dict:
+def run_physics(formulation: dict, pressure_mpa: float, dimensions: dict, shear_override_pa: float | None = None) -> dict:
     uv_depth = compute_uv_penetration_depth(
         formulation["uv_exposure_sec"], formulation["uv_wavelength_nm"], formulation["gelma_pct"]
     )
-    shear = compute_shear_stress(pressure_mpa, formulation["nozzle_gauge"])
+    # Shear is only recalculated when nozzle or extrusion speed changes.
+    # If a previous shear value is passed in (GelMA-only change), it is reused unchanged.
+    if shear_override_pa is not None:
+        shear = shear_override_pa
+    else:
+        shear = compute_shear_stress(pressure_mpa, formulation["nozzle_gauge"])
     filament_d = compute_filament_diameter(pressure_mpa, formulation["nozzle_gauge"], formulation["alginate_pct"], formulation["gelma_pct"])
     crosslink_u = compute_crosslink_uniformity(uv_depth, formulation["layer_height_mm"], formulation["gelma_pct"])
     shape_r = compute_shape_retention(pressure_mpa, formulation["alginate_pct"], formulation["gelma_pct"], formulation["build_temp_c"])
@@ -160,6 +165,7 @@ def run_physics(formulation: dict, pressure_mpa: float, dimensions: dict) -> dic
 
     return {
         "shear_stress_pa":         shear,
+        "shear_recalculated":      shear_override_pa is None,
         "uv_penetration_depth_mm": uv_depth,
         "filament_diameter_mm":    filament_d,
         "crosslink_uniformity":    crosslink_u,
@@ -263,6 +269,14 @@ def compute_rejection_risk(hla_patient: dict, immune_flags: dict, bio: dict) -> 
     base_risk = HLA_MISMATCH_RISK.get(assumed_mismatches, 0.5)
 
     modifiers = []
+
+    # HLA confirmed match: binary clinical override applied before all other modifiers.
+    # Drops base risk by 37% regardless of immune variable state.
+    if immune_flags.get("hla_confirmed_match"):
+        hla_override_delta = -round(base_risk * 0.37, 3)
+        base_risk = round(base_risk + hla_override_delta, 3)
+        modifiers.append({"factor": "hla_confirmed_match_override", "delta": hla_override_delta})
+
     if immune_flags.get("autoimmune_active"):
         base_risk += 0.15; modifiers.append({"factor":"autoimmune_active","delta":+0.15})
     if immune_flags.get("prior_rejection"):
@@ -477,7 +491,62 @@ def assemble_spec(tissue_key: str, formulation: dict, physics: dict, viability: 
 # PIPELINE
 # ─────────────────────────────────────────────────────────────────
 
-def run_simulation(payload: dict) -> dict:
+def _build_regression_diff(baseline: dict, current: dict) -> dict:
+    """Compare current simulation output against a baseline and flag regressions."""
+    regressions = []
+    improvements = []
+
+    checks = [
+        # (label, baseline_path, current_path, higher_is_better)
+        ("viability_24h",          ["stages","viability","24h"],              ["stages","viability","24h"],              True),
+        ("viability_72h",          ["stages","viability","72h"],              ["stages","viability","72h"],              True),
+        ("viability_7d",           ["stages","viability","7d"],               ["stages","viability","7d"],               True),
+        ("rejection_probability",  ["stages","rejection","rejection_probability"], ["stages","rejection","rejection_probability"], False),
+        ("quality_score",          ["stages","physics","quality_score"],      ["stages","physics","quality_score"],      True),
+        ("shear_stress_pa",        ["stages","physics","shear_stress_pa"],    ["stages","physics","shear_stress_pa"],    False),
+        ("metabolic_composite",    ["stages","metabolic","composite"],        ["stages","metabolic","composite"],        True),
+        ("crosslink_uniformity",   ["stages","physics","crosslink_uniformity"], ["stages","physics","crosslink_uniformity"], True),
+        ("shape_retention",        ["stages","physics","shape_retention_score"], ["stages","physics","shape_retention_score"], True),
+    ]
+
+    def _get(d, path):
+        for k in path:
+            if not isinstance(d, dict):
+                return None
+            d = d.get(k)
+        return d
+
+    for label, b_path, c_path in [(c[0], c[1], c[2]) for c in checks]:
+        higher_is_better = next(c[3] for c in checks if c[0] == label)
+        b_val = _get(baseline, b_path)
+        c_val = _get(current, c_path)
+        if b_val is None or c_val is None:
+            continue
+        delta = round(c_val - b_val, 4)
+        if delta == 0:
+            continue
+        worsened = (delta < 0 and higher_is_better) or (delta > 0 and not higher_is_better)
+        entry = {"parameter": label, "baseline": b_val, "current": c_val, "delta": delta}
+        if worsened:
+            regressions.append(entry)
+        else:
+            improvements.append(entry)
+
+    return {
+        "regressions":    regressions,
+        "improvements":   improvements,
+        "has_regressions": len(regressions) > 0,
+    }
+
+
+def run_simulation(payload: dict, baseline_result: dict | None = None) -> dict:
+    """
+    Run one simulation step.
+
+    baseline_result: if provided, this run is treated as the next step in a
+    sequential chain. The previous shear stress is reused unless nozzle gauge
+    or extrusion pressure changed, and a regression diff is appended to the output.
+    """
     tissue_key   = payload["tissue_key"]
     sex          = payload["sex"]
     bio          = payload["bio"]
@@ -499,7 +568,19 @@ def run_simulation(payload: dict) -> dict:
 
     dimensions = patient_meta.get("dimensions", {"length_mm": 20, "width_mm": 20, "depth_mm": 2})
 
-    physics   = run_physics(formulation, pressure, dimensions)
+    # Fix 3: only recalculate shear when nozzle or pressure actually changed.
+    # GelMA-only changes carry forward the previous shear value.
+    shear_override = None
+    if baseline_result:
+        prev_physics = baseline_result.get("stages", {}).get("physics", {})
+        prev_nozzle  = baseline_result.get("formulation", {}).get("nozzle_gauge")
+        prev_pressure = baseline_result.get("spec", {}).get("print_parameters", {}).get("extrusion_pressure_mpa")
+        nozzle_changed   = prev_nozzle   is not None and prev_nozzle   != formulation["nozzle_gauge"]
+        pressure_changed = prev_pressure is not None and abs(prev_pressure - pressure) > 1e-6
+        if not nozzle_changed and not pressure_changed:
+            shear_override = prev_physics.get("shear_stress_pa")
+
+    physics   = run_physics(formulation, pressure, dimensions, shear_override_pa=shear_override)
     viability = predict_viability(
         physics["shear_stress_pa"],
         bio.get("hemoglobin", 13.5), bio.get("glucose", 90.0),
@@ -526,7 +607,7 @@ def run_simulation(payload: dict) -> dict:
     ai_output = call_openai(patient_summary)
     spec = assemble_spec(tissue_key, formulation, physics, viability, rejection, metabolic, flags, patient_meta, pressure)
 
-    return {
+    result = {
         "spec":          spec,
         "flags":         flags,
         "ai_output":     ai_output,
@@ -545,7 +626,14 @@ def run_simulation(payload: dict) -> dict:
             "gelma_pct":    formulation["gelma_pct"],
             "nozzle_gauge": formulation["nozzle_gauge"],
         },
+        "chained_from_baseline": baseline_result is not None,
     }
+
+    # Fix 4: always attach regression diff when a baseline is present.
+    if baseline_result:
+        result["regression_diff"] = _build_regression_diff(baseline_result, result)
+
+    return result
 
 # ─────────────────────────────────────────────────────────────────
 # NLP PAYLOAD GENERATOR
@@ -635,13 +723,15 @@ def init_db():
 init_db()
 
 class SimPayload(BaseModel):
-    tissue_key:   str
-    sex:          str
-    bio:          dict
-    hla:          dict = {}
-    immune_flags: dict = {}
-    patient_meta: dict = {}
-    label:        Optional[str] = None
+    tissue_key:      str
+    sex:             str
+    bio:             dict
+    hla:             dict = {}
+    immune_flags:    dict = {}
+    patient_meta:    dict = {}
+    label:           Optional[str] = None
+    # Fix 1: supply this to chain this run on top of a previous result
+    baseline_run_id: Optional[str] = None
 
 class PromptPayload(BaseModel):
     prompt: str
@@ -652,7 +742,17 @@ class ComparePayload(BaseModel):
 
 @app.post("/biosim/runs")
 def create_run(payload: SimPayload):
-    result = run_simulation(payload.model_dump())
+    # Fix 1: load baseline result when baseline_run_id is provided so this run
+    # chains sequentially from that state rather than recalculating from scratch.
+    baseline_result = None
+    if payload.baseline_run_id:
+        db = get_db()
+        row = db.execute("SELECT result FROM sim_runs WHERE id=?", (payload.baseline_run_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Baseline run {payload.baseline_run_id} not found")
+        baseline_result = json.loads(row["result"])
+
+    result = run_simulation(payload.model_dump(), baseline_result=baseline_result)
     if "error" in result:
         raise HTTPException(status_code=422, detail=result)
 
