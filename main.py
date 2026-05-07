@@ -1,12 +1,15 @@
-import math, json, uuid, sqlite3
+import math, json, uuid, sqlite3, os
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 from typing import Optional
+from dotenv import load_dotenv
 
-client = OpenAI(api_key="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")
+load_dotenv()
+
+client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIG
@@ -867,6 +870,110 @@ def chat_on_result(body: ChatPayload):
         max_tokens=400,
     )
     return {"answer": resp.choices[0].message.content.strip()}
+
+class AgentPayload(BaseModel):
+    message: str
+    current_run_id: Optional[str] = None
+    history: list[dict] = []  # [{role, content}] prior turns
+
+AGENT_SYSTEM = """You are the Zyogen BioSim agentic assistant.
+You decide what action to take based on the user's message and current simulation state.
+
+You MUST return ONLY a JSON object — no prose, no markdown:
+
+{
+  "action": "<one of: simulate | answer | show_card | modify_params | clarify>",
+  "text": "<short conversational reply to show in chat, plain string>",
+  "card": null | {
+    "type": "<one of: stats | viability | rejection | physics | metabolic | hla | flags | longterm | gene | comparison>",
+    "title": "<card title string>"
+  },
+  "sim_payload": null | { ...full simulation payload if action=simulate },
+  "param_edits": null | { "tissue_key":..., "gelma_pct":..., "nozzle_gauge":..., "pressure_override":... }
+}
+
+Action rules:
+- "simulate": user is describing a new patient OR asking to run a simulation. Build sim_payload from the description.
+- "answer": user is asking a question about the current simulation — set card=null, write the answer in text.
+- "show_card": user wants to see a specific view (viability, rejection, physics etc.) — set the card type and a short text. Never re-simulate.
+- "modify_params": user wants to change a parameter (nozzle, GelMA, pressure) on the CURRENT run. Set param_edits with only the changed fields, text explains what will change. This chains from current run.
+- "clarify": not enough info. Ask in text, card=null.
+
+For show_card and answer, NEVER trigger a new simulation. Use the existing data.
+sim_payload must use exact units: tissue_key skin_dermis|skin_epidermis|cartilage|corneal, sex men|women, bio values in standard lab units."""
+
+@app.post("/biosim/agent")
+def agent(body: AgentPayload):
+    current_sim_summary = None
+    if body.current_run_id:
+        db = get_db()
+        row = db.execute("SELECT result FROM sim_runs WHERE id=?", (body.current_run_id,)).fetchone()
+        if row:
+            r = json.loads(row["result"])
+            current_sim_summary = {
+                "tissue": r.get("tissue_key"),
+                "formulation": r.get("formulation"),
+                "physics": r["stages"]["physics"],
+                "viability": {k: v for k, v in r["stages"]["viability"].items() if k != "modifiers"},
+                "rejection": {k: v for k, v in r["stages"]["rejection"].items() if k != "rejection_curve"},
+                "metabolic": r["stages"]["metabolic"],
+                "flags": [f.get("flag") or f.get("error") for f in r.get("flags", [])],
+            }
+
+    state_block = f"\nCurrent simulation:\n{json.dumps(current_sim_summary, indent=2)}" if current_sim_summary else "\nNo simulation loaded yet."
+    messages = [
+        {"role": "system", "content": AGENT_SYSTEM + state_block},
+    ]
+    for h in body.history[-8:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": body.message})
+
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        response_format={"type": "json_object"},
+        messages=messages,
+        temperature=0.1,
+        max_tokens=800,
+    )
+    result = json.loads(resp.choices[0].message.content)
+
+    # If modify_params, merge edits onto current sim payload and chain
+    if result.get("action") == "modify_params" and body.current_run_id and result.get("param_edits"):
+        db = get_db()
+        row = db.execute("SELECT input_data, result FROM sim_runs WHERE id=?", (body.current_run_id,)).fetchone()
+        if row:
+            base_input = json.loads(row["input_data"])
+            base_result = json.loads(row["result"])
+            edits = result["param_edits"]
+            # Apply top-level overrides
+            for k in ["tissue_key", "sex"]:
+                if k in edits:
+                    base_input[k] = edits[k]
+            # GelMA/nozzle go into formulation overrides stored in patient_meta
+            pm = base_input.setdefault("patient_meta", {})
+            for k in ["gelma_pct", "nozzle_gauge", "pressure_override"]:
+                if k in edits:
+                    pm[f"override_{k}"] = edits[k]
+            base_input["baseline_run_id"] = body.current_run_id
+            sim_result = run_simulation(base_input, baseline_result=base_result)
+            if "error" not in sim_result:
+                run_id = str(uuid.uuid4())
+                db.execute(
+                    "INSERT INTO sim_runs VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (run_id, sim_result["tissue_key"],
+                     base_input["sex"],
+                     sim_result["stages"]["rejection"]["risk_tier"],
+                     sim_result["stages"]["physics"]["quality_score"],
+                     sim_result["stages"]["viability"]["24h"],
+                     json.dumps(base_input), json.dumps(sim_result),
+                     f"Modified · {sim_result['formulation']['display']}",
+                     datetime.now().isoformat())
+                )
+                db.commit()
+                result["sim_result"] = sim_result
+                result["new_run_id"] = run_id
+
+    return result
 
 @app.post("/biosim/generate-payload")
 def generate_payload(body: PromptPayload):
