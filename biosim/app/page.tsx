@@ -420,9 +420,9 @@ function SimEnergyCharts({ viability, physics }: { viability: Viability; physics
 
   return (
     <div className="flex flex-col gap-2">
-      <EnergyMiniChart data={viabData}  stroke="#8b5cf6" grad="vg"  label="⚡ Cell Viability Signal"    unit="%" mean={`${viability["24h"]}`} />
-      <EnergyMiniChart data={shearData} stroke="#34d399" grad="sg"  label="⚡ Shear Stress"              unit="Pa" mean={fmt(physics.shear_stress_pa)} />
-      <EnergyMiniChart data={tempData}  stroke="#fb923c" grad="tg"  label="🌡 Build Temperature"         unit="°C" mean="37.0" />
+      <EnergyMiniChart data={viabData}  stroke="#8b5cf6" grad="vg"  label="Cell Viability Signal"    unit="%" mean={`${viability["24h"]}`} />
+      <EnergyMiniChart data={shearData} stroke="#34d399" grad="sg"  label="Shear Stress"              unit="Pa" mean={fmt(physics.shear_stress_pa)} />
+      <EnergyMiniChart data={tempData}  stroke="#fb923c" grad="tg"  label="Build Temperature"         unit="°C" mean="37.0" />
     </div>
   );
 }
@@ -802,69 +802,27 @@ function GeneSequenceViewer({ genes }: { genes: [string,string,string,string][] 
 // PROPERTY TABLE
 // ─────────────────────────────────────────────────────────────────
 
-function PropertyTable({ result }: { result: SimResult }) {
-  const { stages, formulation } = result;
-  const rr = stages.rejection.rejection_probability;
-  const rows = [
-    { label:"Print Quality",     value:fmt(stages.physics.quality_score*100,1), color:stages.physics.quality_score>0.7?"#16a34a":"#d97706" },
-    { label:"Viability 24h",     value:`${stages.viability["24h"]}%`,           color:stages.viability["24h"]>80?"#16a34a":"#d97706" },
-    { label:"Viability 72h",     value:`${stages.viability["72h"]}%`,           color:stages.viability["72h"]>70?"#16a34a":"#d97706" },
-    { label:"Rejection Risk",    value:pct(rr),                                 color:riskColor(stages.rejection.risk_tier) },
-    { label:"Metabolic",         value:`${fmt(stages.metabolic.composite*100,1)}%`, color:readColor(stages.metabolic.readiness) },
-    { label:"Shear Stress",      value:`${fmt(stages.physics.shear_stress_pa)} Pa`, color:stages.physics.shear_stress_pa<200?"#16a34a":"#d97706" },
-    { label:"Crosslink Unif.",   value:pct(stages.physics.crosslink_uniformity), color:stages.physics.crosslink_uniformity>0.65?"#16a34a":"#d97706" },
-    { label:"GelMA",             value:`${formulation.gelma_pct}% w/v`,          color:"#3b82f6" },
-    { label:"Alginate",          value:`${formulation.alginate_pct}% w/v`,       color:"#8b5cf6" },
-  ];
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest">Bioprint & Drug-likeness</span>
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
-        <table className="w-full">
-          <tbody>
-            {rows.map((r,i)=>(
-              <tr key={i} className="border-b border-slate-100 last:border-0">
-                <td className="px-3 py-1.5 font-mono text-[9px] text-slate-500">{r.label}</td>
-                <td className="px-3 py-1.5 font-mono text-[10px] font-semibold text-right" style={{ color:r.color }}>{r.value}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="rounded-xl border border-slate-200 p-3 flex flex-col gap-1.5">
-        <span className="font-mono text-[8px] text-slate-400 uppercase tracking-widest mb-0.5">Scaffold Rules</span>
-        {[
-          ["Printability",   stages.physics.quality_score>0.6, stages.physics.quality_score>0.6?"PASS":"FAIL"],
-          ["Viability ≥80%", !stages.viability.below_threshold, stages.viability.below_threshold?"FAIL":"PASS"],
-          ["Rejection <50%", rr<0.5, rr<0.5?"PASS":"HIGH"],
-          ["Metabolic OK",   stages.metabolic.composite>0.5, stages.metabolic.composite>0.5?"PASS":"MARGINAL"],
-        ].map(([label,pass,badge])=>(
-          <div key={label as string} className="flex items-center justify-between">
-            <span className="font-mono text-[8.5px] text-slate-500">{label as string}</span>
-            <span className="font-mono text-[8px] px-2 py-0.5 rounded-full" style={{ background:pass?"#dcfce7":"#fee2e2", color:pass?"#16a34a":"#dc2626" }}>{badge as string}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ─────────────────────────────────────────────────────────────────
 // LONG TERM DATA
 // ─────────────────────────────────────────────────────────────────
 
-function buildLongTerm(viability: Viability, rejection: Rejection) {
-  const v7=viability["7d"]/100, r=rejection.rejection_probability;
+function buildLongTerm(viability: Viability, rejection: Rejection, metabolic: Metabolic) {
+  const v7 = viability["7d"] / 100;
+  const r   = rejection.rejection_probability;
+  // Decay rate past 7d is driven by metabolic readiness and rejection pressure.
+  // Better metabolic score = slower decay; higher rejection = faster decay.
+  const decayRate = Math.max(0.60, 1 - (1 - metabolic.composite) * 0.25 - r * 0.18);
+  const v = (factor: number) => Math.min(100, Math.max(0, Math.round(v7 * factor * 100)));
   return [
-    { t:"0h",   viability:100,                        rejection:0 },
-    { t:"24h",  viability:viability["24h"],            rejection:Math.round(r*100*0.12) },
-    { t:"72h",  viability:viability["72h"],            rejection:Math.round(r*100*0.28) },
-    { t:"7d",   viability:viability["7d"],             rejection:Math.round(rejection.rejection_curve.day_7*100) },
-    { t:"14d",  viability:Math.round(v7*96*100),       rejection:Math.round(r*100*0.50) },
-    { t:"30d",  viability:Math.round(v7*88*100),       rejection:Math.round(rejection.rejection_curve.day_30*100) },
-    { t:"60d",  viability:Math.round(v7*80*100),       rejection:Math.round(r*100*0.72) },
-    { t:"90d",  viability:Math.round(v7*72*100),       rejection:Math.round(rejection.rejection_curve.day_90*100) },
-    { t:"180d", viability:Math.round(v7*60*100),       rejection:Math.round(rejection.rejection_curve.day_180*100) },
+    { t:"0h",   viability:100,                          rejection:0 },
+    { t:"24h",  viability:viability["24h"],              rejection:Math.round(r * 100 * 0.12) },
+    { t:"72h",  viability:viability["72h"],              rejection:Math.round(r * 100 * 0.28) },
+    { t:"7d",   viability:viability["7d"],               rejection:Math.round(rejection.rejection_curve.day_7 * 100) },
+    { t:"14d",  viability:v(decayRate ** (7  / 30)),     rejection:Math.round(r * 100 * 0.50) },
+    { t:"30d",  viability:v(decayRate ** (30 / 30)),     rejection:Math.round(rejection.rejection_curve.day_30 * 100) },
+    { t:"60d",  viability:v(decayRate ** (60 / 30)),     rejection:Math.round(r * 100 * 0.72) },
+    { t:"90d",  viability:v(decayRate ** (90 / 30)),     rejection:Math.round(rejection.rejection_curve.day_90 * 100) },
+    { t:"180d", viability:v(decayRate ** (180 / 30)),    rejection:Math.round(rejection.rejection_curve.day_180 * 100) },
   ];
 }
 
@@ -906,30 +864,54 @@ function AIChatRail({ result, onRunSim, running }: {
   async function send() {
     const msg = input.trim(); if (!msg) return;
     setInput("");
-    setMessages(prev => [...prev, { role:"user", text:msg, ts:Date.now() }]);
+    const newUserMsg: ChatMessage = { role:"user", text:msg, ts:Date.now() };
+    setMessages(prev => [...prev, newUserMsg]);
     setThinking(true);
     try {
-      // try to run sim from natural language
-      const res  = await fetch(`${API}/biosim/generate-payload`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ prompt:msg }) });
-      const data = await res.json();
-      if (res.ok && data.payload?.tissue_key) {
-        setMessages(prev => [...prev, { role:"assistant", text:`Parsed your description — running simulation for **${data.payload.tissue_key.replace("_"," ")}**...`, ts:Date.now() }]);
-        onRunSim(data.payload);
-      } else {
-        // fallback: answer from current result context
-        const ctx = result ? `Current simulation: ${result.formulation.display}, ${result.stages.rejection.risk_tier} risk, viability 24h ${result.stages.viability["24h"]}%, quality ${fmt(result.stages.physics.quality_score*100,0)}%.` : "No simulation loaded yet.";
-        setMessages(prev => [...prev, { role:"assistant", text:`${ctx}\n\nI couldn't parse a specific simulation from your message. Try describing a patient — e.g. "female, 28, Hb 12.4, skin graft target".`, ts:Date.now() }]);
+      // First: try to parse as a new simulation request
+      const parseRes  = await fetch(`${API}/biosim/generate-payload`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ prompt:msg }) });
+      const parseData = await parseRes.json();
+      if (parseRes.ok && parseData.payload?.tissue_key) {
+        setMessages(prev => [...prev, { role:"assistant", text:`Parsed — running simulation for ${parseData.payload.tissue_key.replace("_"," ")}...`, ts:Date.now() }]);
+        onRunSim(parseData.payload);
+        return;
       }
+
+      // Second: if a simulation is loaded, answer the question against it
+      if (result) {
+        const history = messages.slice(-6).map(m => ({ role: m.role, content: m.text }));
+        const simContext = {
+          tissue: result.formulation.display,
+          formulation: result.formulation,
+          physics: result.stages.physics,
+          viability: result.stages.viability,
+          rejection: result.stages.rejection,
+          metabolic: result.stages.metabolic,
+          flags: result.flags,
+          ai_assessment: result.ai_output.overall_assessment,
+        };
+        const chatRes  = await fetch(`${API}/biosim/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ question:msg, sim_context:simContext, history }) });
+        const chatData = await chatRes.json();
+        if (chatRes.ok && chatData.answer) {
+          setMessages(prev => [...prev, { role:"assistant", text:chatData.answer, ts:Date.now() }]);
+          return;
+        }
+      }
+
+      // No simulation loaded
+      setMessages(prev => [...prev, { role:"assistant", text:"No simulation is loaded yet. Describe a patient to run one — e.g. \"female, 28, Hb 12.4, skin graft target\".", ts:Date.now() }]);
     } catch {
       setMessages(prev => [...prev, { role:"assistant", text:"Connection error — is the backend running on port 8000?", ts:Date.now() }]);
     } finally { setThinking(false); }
   }
 
   const QUICK = [
-    { label:"Low risk demo",    msg:"Run: female 24, skin graft, Hb 13.2, glucose 88, no immune issues" },
-    { label:"Cartilage demo",   msg:"Run: male 45, cartilage patch, Hb 14.1, glucose 108" },
-    { label:"High risk demo",   msg:"Run: male, corneal graft, Hb 11.2, autoimmune active, prior rejection" },
-    { label:"Current summary",  msg:"Summarise the current simulation results" },
+    { label:"Low risk demo",      msg:"Run: female 24, skin graft, Hb 13.2, glucose 88, no immune issues" },
+    { label:"Cartilage demo",     msg:"Run: male 45, cartilage patch, Hb 14.1, glucose 108" },
+    { label:"High risk demo",     msg:"Run: male, corneal graft, Hb 11.2, autoimmune active, prior rejection" },
+    { label:"Why is rejection high?", msg:"Why is the rejection risk high in this simulation? What is driving it?" },
+    { label:"Explain shear",      msg:"What does the shear stress value mean for cell viability in this result?" },
+    { label:"Improve viability",  msg:"What changes would most improve the viability score for this simulation?" },
   ];
 
   return (
@@ -1097,45 +1079,38 @@ function Dashboard({ result, runs, onLoad }: { result: SimResult|null; runs: Run
 
         {/* ── MAIN TAB ── */}
         {result && tab === "main" && (
-          <div className="h-full grid grid-cols-[minmax(0,2.2fr)_minmax(0,1.4fr)_minmax(0,1.2fr)] gap-3">
+          <div className="h-full overflow-y-auto flex flex-col gap-3 pr-1">
 
-            {/* Col 1: Tissue network (hero) + scaffold molecule strip */}
-            <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
-              {/* stat pills row */}
-              <div className="flex gap-2 shrink-0">
-                {[
-                  { label:"Viability 24h", value:`${result.stages.viability["24h"]}%`,              color:result.stages.viability["24h"]>80?"#16a34a":"#d97706" },
-                  { label:"Viability 72h", value:`${result.stages.viability["72h"]}%`,              color:result.stages.viability["72h"]>70?"#16a34a":"#d97706" },
-                  { label:"Rejection",     value:pct(result.stages.rejection.rejection_probability), color:riskColor(result.stages.rejection.risk_tier) },
-                  { label:"Print Q",       value:`${fmt(result.stages.physics.quality_score*100,0)}%`,color:result.stages.physics.quality_score>0.7?"#16a34a":"#d97706" },
-                ].map(s => (
-                  <div key={s.label} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 flex flex-col gap-0.5">
-                    <span className="font-mono text-[6.5px] text-slate-400 uppercase tracking-widest">{s.label}</span>
-                    <span className="font-mono text-[18px] font-light leading-none" style={{ color: s.color }}>{s.value}</span>
-                  </div>
-                ))}
-              </div>
+            {/* Row 1: stat pills */}
+            <div className="flex gap-2 shrink-0">
+              {[
+                { label:"Viability 24h", value:`${result.stages.viability["24h"]}%`,               color:result.stages.viability["24h"]>80?"#16a34a":"#d97706" },
+                { label:"Viability 72h", value:`${result.stages.viability["72h"]}%`,               color:result.stages.viability["72h"]>70?"#16a34a":"#d97706" },
+                { label:"Rejection",     value:pct(result.stages.rejection.rejection_probability),  color:riskColor(result.stages.rejection.risk_tier) },
+                { label:"Print Quality", value:`${fmt(result.stages.physics.quality_score*100,0)}%`,color:result.stages.physics.quality_score>0.7?"#16a34a":"#d97706" },
+                { label:"Metabolic",     value:result.stages.metabolic.readiness,                  color:readColor(result.stages.metabolic.readiness) },
+                { label:"Shear",         value:`${fmt(result.stages.physics.shear_stress_pa)} Pa`,  color:result.stages.physics.shear_stress_pa<200?"#16a34a":"#d97706" },
+              ].map(s => (
+                <div key={s.label} className="flex-1 bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 flex flex-col gap-0.5">
+                  <span className="font-mono text-[6.5px] text-slate-400 uppercase tracking-widest">{s.label}</span>
+                  <span className="font-mono text-[15px] font-light leading-none" style={{ color: s.color }}>{s.value}</span>
+                </div>
+              ))}
+            </div>
 
-              {/* tissue network — hero */}
-              <div className="flex-1 min-h-0">
+            {/* Row 2: network graph (compact) + HLA side by side */}
+            <div className="grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] gap-3 shrink-0">
+              <div className="border border-slate-100 rounded-xl p-3" style={{ height: 240 }}>
                 <TissueNetworkGraph result={result} viability={result.stages.viability} />
               </div>
-
-              {/* scaffold molecule strip */}
-              <div className="shrink-0">
-                <ScaffoldViewer tissueKey={result.tissue_key} />
+              <div className="border border-slate-100 rounded-xl p-3">
+                <HLAMap rejection={result.stages.rejection} />
               </div>
             </div>
 
-            {/* Col 2: HLA → Bioprint & Drug-likeness → Physics bars → Flags */}
-            <div className="flex flex-col gap-3 min-h-0 overflow-y-auto">
-              <div className="border border-slate-100 rounded-xl p-3 shrink-0">
-                <HLAMap rejection={result.stages.rejection} />
-              </div>
-              <div className="shrink-0">
-                <PropertyTable result={result} />
-              </div>
-              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2 shrink-0">
+            {/* Row 3: physics bars + scaffold rules + flags — 3 equal columns */}
+            <div className="grid grid-cols-3 gap-3 shrink-0">
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2">
                 <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Physics</span>
                 {[
                   { label:"Crosslink", val:result.stages.physics.crosslink_uniformity,  thresh:0.65 },
@@ -1152,42 +1127,63 @@ function Dashboard({ result, runs, onLoad }: { result: SimResult|null; runs: Run
                   </div>
                 ))}
               </div>
-              {result.flags.length > 0 && (
-                <div className="flex flex-col gap-1 shrink-0">
-                  <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Flags</span>
-                  {result.flags.map((f, i) => (
-                    <div key={i} className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg border text-[7.5px] font-mono"
-                      style={{ background:f.severity==="error"?"#fef2f2":"#fffbeb", borderColor:f.severity==="error"?"#fecaca":"#fde68a" }}>
-                      <span className="font-semibold shrink-0" style={{ color:f.severity==="error"?"#dc2626":"#92400e" }}>{f.field}</span>
-                      <span className="text-slate-500 truncate">{f.flag||f.error}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-1.5">
+                <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest mb-0.5">Scaffold Rules</span>
+                {[
+                  ["Printability",   result.stages.physics.quality_score>0.6,        result.stages.physics.quality_score>0.6?"PASS":"FAIL"],
+                  ["Viability ≥80%", !result.stages.viability.below_threshold,        result.stages.viability.below_threshold?"FAIL":"PASS"],
+                  ["Rejection <50%", result.stages.rejection.rejection_probability<0.5,result.stages.rejection.rejection_probability<0.5?"PASS":"HIGH"],
+                  ["Metabolic OK",   result.stages.metabolic.composite>0.5,           result.stages.metabolic.composite>0.5?"PASS":"MARGINAL"],
+                ].map(([label,pass,badge])=>(
+                  <div key={label as string} className="flex items-center justify-between">
+                    <span className="font-mono text-[8.5px] text-slate-500">{label as string}</span>
+                    <span className="font-mono text-[8px] px-2 py-0.5 rounded-full" style={{ background:pass?"#dcfce7":"#fee2e2", color:pass?"#16a34a":"#dc2626" }}>{badge as string}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {result.flags.length > 0 ? (
+                  <>
+                    <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Flags</span>
+                    {result.flags.map((f, i) => (
+                      <div key={i} className="flex items-start gap-1.5 px-2.5 py-1.5 rounded-lg border text-[7.5px] font-mono"
+                        style={{ background:f.severity==="error"?"#fef2f2":"#fffbeb", borderColor:f.severity==="error"?"#fecaca":"#fde68a" }}>
+                        <span className="font-semibold shrink-0" style={{ color:f.severity==="error"?"#dc2626":"#92400e" }}>{f.field}</span>
+                        <span className="text-slate-500 truncate">{f.flag||f.error}</span>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div className="flex items-center justify-center h-full">
+                    <span className="font-mono text-[8px] text-slate-300">No flags</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Col 3: Gene expression → Signal traces → Metabolic radar */}
-            <div className="flex flex-col gap-3 min-h-0 overflow-hidden">
-              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2 flex-1 min-h-0">
-                <div className="flex items-center justify-between shrink-0">
+            {/* Row 4: gene expression + signal traces + metabolic radar */}
+            <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,0.9fr)] gap-3 shrink-0">
+              <div className="border border-slate-100 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
                   <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Gene Expression</span>
                   <span className="font-mono text-[7px] text-slate-300">{result.genes.length} genes</span>
                 </div>
-                <div className="overflow-y-auto flex-1 min-h-0">
-                  <GeneSequenceViewer genes={result.genes} />
-                </div>
+                <GeneSequenceViewer genes={result.genes} />
               </div>
-              <div className="flex flex-col gap-2 shrink-0">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                  <span className="font-mono text-[7.5px] text-slate-400">Signal traces</span>
-                </div>
+              <div className="border border-slate-100 rounded-xl p-3 flex flex-col gap-2">
+                <span className="font-mono text-[7.5px] text-slate-400 uppercase tracking-widest">Signal Traces</span>
                 <SimEnergyCharts viability={result.stages.viability} physics={result.stages.physics} />
               </div>
-              <div className="border border-slate-100 rounded-xl p-3 shrink-0">
+              <div className="border border-slate-100 rounded-xl p-3">
                 <MetabolicRadar metabolic={result.stages.metabolic} />
               </div>
             </div>
+
+            {/* Row 5: scaffold molecule viewer */}
+            <div className="border border-slate-100 rounded-xl p-3 shrink-0">
+              <ScaffoldViewer tissueKey={result.tissue_key} />
+            </div>
+
           </div>
         )}
 
@@ -1200,7 +1196,7 @@ function Dashboard({ result, runs, onLoad }: { result: SimResult|null; runs: Run
                 <span className="font-mono text-[7.5px] text-slate-300">Extrapolated — not clinical</span>
               </div>
               <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={buildLongTerm(result.stages.viability,result.stages.rejection)}>
+                <LineChart data={buildLongTerm(result.stages.viability,result.stages.rejection,result.stages.metabolic)}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="t" tick={{ fontFamily:"monospace",fontSize:9,fill:"#94a3b8" }} />
                   <YAxis domain={[0,100]} tick={{ fontFamily:"monospace",fontSize:9,fill:"#94a3b8" }} unit="%" />

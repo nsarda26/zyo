@@ -831,6 +831,43 @@ def compare_runs(body: ComparePayload):
         "ai_output": ai_output,
     }
 
+class ChatPayload(BaseModel):
+    question: str
+    sim_context: dict  # the full stages + formulation from the current result
+    history: list[dict] = []  # [{role, content}, ...] prior turns
+
+CHAT_SYSTEM = """You are a clinical bioprinting expert embedded in the Zyogen BioSim platform.
+You have access to the exact computed simulation values for the current run.
+Answer the clinician or engineer's question specifically, referencing the actual numbers provided.
+
+Rules:
+- Only reference values present in the sim_context. Never invent numbers.
+- Use clinical language but keep it accessible.
+- Never diagnose. Use "values suggest", "flags for review", "indicates".
+- Short answers: 2-4 sentences unless a detailed explanation is explicitly asked for.
+- Always end answers with: "Research aid — requires validation."
+- Plain text only — no markdown, no bullet points unless asked."""
+
+@app.post("/biosim/chat")
+def chat_on_result(body: ChatPayload):
+    context_block = json.dumps(body.sim_context, indent=2)
+    messages = [
+        {"role": "system", "content": CHAT_SYSTEM},
+        {"role": "user",   "content": f"Current simulation data:\n{context_block}"},
+        {"role": "assistant", "content": "Understood. I have the simulation data. Ask me anything about it."},
+    ]
+    for h in body.history[-6:]:  # keep last 3 turns of real history
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": body.question})
+
+    resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.2,
+        max_tokens=400,
+    )
+    return {"answer": resp.choices[0].message.content.strip()}
+
 @app.post("/biosim/generate-payload")
 def generate_payload(body: PromptPayload):
     resp = client.chat.completions.create(
